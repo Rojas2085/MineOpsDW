@@ -36,3 +36,11 @@ Proyecto de monitorización experimental de minería, telemetría de hardware, D
 - Binance empieza en modo de solo lectura; no habilitar retiros desde una API.
 - No ejecutar ni instalar mineros automáticamente sin aprobación explícita.
 - Cada fase debe dejar pruebas ejecutadas y documentación actualizada.
+
+## Ejecución de pruebas y validación (Fase 1)
+Desde PowerShell en la raíz del proyecto:
+
+```powershell
+python -m compileall src tests
+python -m pytest
+```

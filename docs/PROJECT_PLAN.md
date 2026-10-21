@@ -12,10 +12,10 @@ Aplicación local de PC para telemetría, registro histórico, estado de minerí
 **Aceptación:** decisiones documentadas con ventajas y limitaciones; sensores no comprobados marcados como `unavailable`/pendientes; ningún minero real ejecutado; esperando aprobación explícita del usuario para pasar a Fase 1.
 **No hacer:** crear la aplicación completa, instalar paquetes sin autorización, elegir pool/Binance por el usuario o configurar credenciales.
 
-### Fase 1 — Esqueleto del repositorio y calidad
-**Entregables:** estructura de paquetes, configuración de Python, logging, configuración tipada, CI local/documentada, pruebas de humo.
-**Pruebas:** instalación limpia en entorno virtual; importación de módulos; lint/type-check si se configuran; suite de pruebas vacía/semilla.
-**Aceptación:** una persona puede clonar/abrir el proyecto y ejecutar los comandos documentados desde Windows.
+### Fase 1 — Esqueleto del repositorio y calidad (Completada; pendiente de aprobación del usuario)
+**Entregables completados:** estructura de paquetes en `src/mineops_dw/` (`domain`, `adapters`, `storage`, `collector`, `api`, `reporting`), configuración tipada en `src/mineops_dw/config.py` (usando `pydantic` y `python-dotenv` ya presentes en Python 3.13), sistema de logging con `SecretRedactingFilter` en `src/mineops_dw/logging_config.py`, y suite de pruebas de humo en `tests/test_smoke_phase1.py`.
+**Pruebas ejecutadas:** compilación limpia con `python -m compileall src tests` y ejecución de `python -m pytest` (6 pruebas pasadas).
+**Aceptación:** cualquier desarrollador puede abrir el proyecto y ejecutar los comandos documentados desde Windows sin instalar paquetes nuevos.
 
 ### Fase 2 — Modelo de dominio y almacenamiento
 **Entregables:** entidades Measurement, MiningSession, PoolShare, RewardSnapshot, PriceSnapshot, PaymentEvent; SQLite y migraciones versionadas.
