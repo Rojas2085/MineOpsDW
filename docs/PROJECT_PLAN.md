@@ -52,10 +52,10 @@ Aplicación local de PC para telemetría, registro histórico, estado de minerí
 **Pruebas ejecutadas:** `tests/test_phase8_reporting.py` verificando ventanas exactas, reloj alterado, huecos de datos, no duplicación ante reinicio/reintento y exportación JSON/CSV.
 **Aceptación:** cada reporte indica periodo, zona horaria (`UTC`), datos ausentes (`unavailable`) y procedencia (`sources`).
 
-### Fase 9 — Precio BTC y cálculo económico
-**Entregables:** adaptador de precio de mercado, conversión USD/BOB opcional, coste eléctrico configurable.
-**Pruebas:** API caída, respuesta inválida, precio stale, conversión sin dato de FX, cálculos de unidades.
-**Aceptación:** valor de recompensa estimada separado de ingreso confirmado; coste eléctrico no se inventa si falta potencia/medición.
+### Fase 9 — Precio BTC y cálculo económico (Completada; pendiente de aprobación del usuario)
+**Entregables completados:** `MarketPriceAdapter` en `src/mineops_dw/adapters/prices.py` con detección de cotización desactualizada (`stale`) y conversión USD/BOB opcional condicionada a dato de FX; y `evaluate_economics` en `src/mineops_dw/domain/economics.py` con conversión exacta `Wh -> kWh` en `Decimal` y separación estricta entre valor estimado, saldo en pool e ingreso confirmado en Binance.
+**Pruebas ejecutadas:** `tests/test_phase9_prices_economics.py` verificando API caída, respuesta inválida, precio `stale`, conversión sin dato de FX, cálculos de unidades y coste eléctrico `unavailable` cuando falta potencia.
+**Aceptación:** valor de recompensa estimada separado del ingreso confirmado; el coste eléctrico jamás se inventa si falta medición de potencia/energía.
 
 ### Fase 10 — Binance de solo lectura
 **Entregables:** configuración local segura, consulta de depósitos/historial si la API disponible lo permite, pantalla de conciliación.

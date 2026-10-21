@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from mineops_dw.domain.economics import EconomicEvaluation, evaluate_economics
 from mineops_dw.domain.models import (
     DataMode,
     Measurement,
@@ -27,6 +28,7 @@ from mineops_dw.domain.telemetry import (
 
 __all__ = [
     "DataMode",
+    "EconomicEvaluation",
     "Measurement",
     "MiningSession",
     "PaymentEvent",
@@ -41,6 +43,7 @@ __all__ = [
     "SessionState",
     "SettlementStatus",
     "compute_energy_measurement",
+    "evaluate_economics",
     "evaluate_safety_limits",
     "normalize_decimal_str",
     "normalize_utc_timestamp",

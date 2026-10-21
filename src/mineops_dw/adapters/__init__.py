@@ -13,6 +13,7 @@ from mineops_dw.adapters.pool_http import (
     PoolStatusSnapshot,
     ReadOnlyHttpPoolAdapter,
 )
+from mineops_dw.adapters.prices import MarketPriceAdapter, PriceAdapter
 from mineops_dw.adapters.sensors import (
     HostResourceSensorAdapter,
     LhmSensorAdapter,
@@ -23,10 +24,12 @@ from mineops_dw.adapters.sensors import (
 __all__ = [
     "HostResourceSensorAdapter",
     "LhmSensorAdapter",
+    "MarketPriceAdapter",
     "MinerAdapter",
     "MinerExecutionGuard",
     "PoolAdapter",
     "PoolStatusSnapshot",
+    "PriceAdapter",
     "ReadOnlyHttpPoolAdapter",
     "SensorAdapter",
     "SimulatedMinerPoolAdapter",
