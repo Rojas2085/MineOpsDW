@@ -62,10 +62,10 @@ Aplicación local de PC para telemetría, registro histórico, estado de minerí
 **Pruebas ejecutadas:** `tests/test_phase10_binance_reconciliation.py` cubriendo modo sin clave (`disconnected`), clave inválida/permisos insuficientes (`401`), timeout, respuesta vacía, paginación, conciliación estricta por `txId` + monto + timestamp y ausencia total de secretos en logs.
 **Aceptación:** estrictamente solo lectura; no se habilitan permisos de trading ni retiro; no se guarda ni expone información sensible.
 
-### Fase 11 — Android (opcional)
-**Entregables:** agente Kotlin para batería, temperatura solo si la API/dispositivo lo permite, memoria y estado de carga; envío autenticado al PC.
-**Pruebas:** permiso denegado, pérdida de red, reconexión, ahorro de batería, datos stale, token inválido.
-**Aceptación:** Android no es requisito para que el MVP de PC funcione.
+### Fase 11 — Android (opcional) (Completada; pendiente de aprobación del usuario)
+**Entregables completados:** agente Kotlin de referencia en `android/MineOpsAndroidAgent.kt` y servicio de ingesta autenticada `AndroidTelemetryIngestionService` en `src/mineops_dw/adapters/android.py` para batería, temperatura (solo si el dispositivo la expone), memoria y estado de carga.
+**Pruebas ejecutadas:** `tests/test_phase11_android_optional.py` probando permiso denegado, pérdida de red/reconexión, modo ahorro de batería, datos `stale` y rechazo de token inválido.
+**Aceptación:** Android funciona como módulo totalmente desacoplado y no es requisito para que el MVP de PC opere.
 
 ### Fase 12 — Endurecimiento y entrega
 **Entregables:** pruebas de regresión, backups, manual de usuario, guía de recuperación, build reproducible y checklist de seguridad.

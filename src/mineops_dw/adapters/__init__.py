@@ -2,6 +2,10 @@
 
 from __future__ import annotations
 
+from mineops_dw.adapters.android import (
+    AndroidTelemetryIngestionService,
+    AndroidTelemetryPayload,
+)
 from mineops_dw.adapters.binance import (
     BINANCE_DEPOSIT_HISTORY_PATH,
     BinanceConnectionStatus,
@@ -29,6 +33,8 @@ from mineops_dw.adapters.sensors import (
 )
 
 __all__ = [
+    "AndroidTelemetryIngestionService",
+    "AndroidTelemetryPayload",
     "BINANCE_DEPOSIT_HISTORY_PATH",
     "BinanceConnectionStatus",
     "BinanceDepositFetchResult",
