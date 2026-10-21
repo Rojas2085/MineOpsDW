@@ -2,6 +2,12 @@
 
 from __future__ import annotations
 
+from mineops_dw.adapters.mining import (
+    MinerAdapter,
+    PoolAdapter,
+    SimulatedMinerPoolAdapter,
+    SimulationStepResult,
+)
 from mineops_dw.adapters.sensors import (
     HostResourceSensorAdapter,
     LhmSensorAdapter,
@@ -12,6 +18,10 @@ from mineops_dw.adapters.sensors import (
 __all__ = [
     "HostResourceSensorAdapter",
     "LhmSensorAdapter",
+    "MinerAdapter",
+    "PoolAdapter",
     "SensorAdapter",
+    "SimulatedMinerPoolAdapter",
+    "SimulationStepResult",
     "build_safe_measurement",
 ]

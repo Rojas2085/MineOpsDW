@@ -32,10 +32,10 @@ Aplicación local de PC para telemetría, registro histórico, estado de minerí
 **Pruebas ejecutadas:** `tests/test_phase4_collector_api.py` probando endpoints, esquema OpenAPI, valores inválidos (`400`), no autorización (`401`), parada automática por límite térmico, persistencia tras colección y concurrencia sobre loopback.
 **Aceptación:** el dashboard puede consultar todos los datos vía API REST local sin acceder directamente a SQLite.
 
-### Fase 5 — Adaptador de minería/pool en modo simulado
-**Entregables:** interfaz MinerAdapter/PoolAdapter; proveedor simulado determinista; estados de sesión; shares y recompensas etiquetadas.
-**Pruebas:** conexión ausente, share aceptada/rechazada, pool caído, reconexión, datos duplicados, saldo estimado separado del confirmado.
-**Aceptación:** flujo completo probado sin instalar ni ejecutar un minero real.
+### Fase 5 — Adaptador de minería/pool en modo simulado (Completada; pendiente de aprobación del usuario)
+**Entregables completados:** interfaces `MinerAdapter` y `PoolAdapter`, y simulador determinista `SimulatedMinerPoolAdapter` en `src/mineops_dw/adapters/mining.py` con soporte completo de estados de sesión (`running`, `paused`, `stopped`, `error`), desconexión/reconexión de pool, shares aceptadas/rechazadas y separación entre recompensa estimada (`estimated`), saldo del pool (`pool_reported`) y pago emitido (`payout_issued`).
+**Pruebas ejecutadas:** `tests/test_phase5_simulated_mining.py` probando pérdida de conexión, shares aceptadas/rechazadas, reconexión, idempotencia de sincronización en SQLite, reproducibilidad por semilla y separación de estados financieros.
+**Aceptación:** flujo completo probado y persistido sin instalar ni ejecutar ningún minero real.
 
 ### Fase 6 — Integración real opcional
 **Entregables:** adaptador para una fuente/minero/pool elegido por el usuario; guía de instalación verificada; límites de carga/temperatura/tiempo.
