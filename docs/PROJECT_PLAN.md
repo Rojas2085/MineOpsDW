@@ -27,10 +27,10 @@ Aplicación local de PC para telemetría, registro histórico, estado de minerí
 **Pruebas ejecutadas:** `tests/test_phase3_telemetry.py` verificando sensor presente, sensor ausente, fallo de sensor, timeout HTTP, rechazo de rango inválido (`>100%`), permisos insuficientes (`PermissionError`), cálculo de Wh y baja sobrecarga en Windows.
 **Aceptación:** cada métrica tiene unidad, fuente, estado y timestamp UTC; la ausencia de un sensor o de LHM se registra como `unavailable` sin romper el agente.
 
-### Fase 4 — Servicio de colección y API local
-**Entregables:** servicio de muestreo configurable, API REST, OpenAPI, endpoint health, autenticación local si se habilita acceso fuera de loopback.
-**Pruebas:** endpoints, esquema, valores inválidos, timeout, persistencia, concurrencia básica, no exposición pública por defecto.
-**Aceptación:** dashboard puede leer datos sin acceder directamente a SQLite.
+### Fase 4 — Servicio de colección y API local (Completada; pendiente de aprobación del usuario)
+**Entregables completados:** `TelemetryCollectorService` y `PeriodicCollectorScheduler` en `src/mineops_dw/collector/service.py`; `MineOpsApiService` (con generación de especificación OpenAPI `3.1.0` en `/openapi.json`, endpoint `/health`, autenticación `X-MineOps-Token` y bloqueo de binding público por defecto) y `LocalHttpServer` (`127.0.0.1`) en `src/mineops_dw/api/server.py`.
+**Pruebas ejecutadas:** `tests/test_phase4_collector_api.py` probando endpoints, esquema OpenAPI, valores inválidos (`400`), no autorización (`401`), parada automática por límite térmico, persistencia tras colección y concurrencia sobre loopback.
+**Aceptación:** el dashboard puede consultar todos los datos vía API REST local sin acceder directamente a SQLite.
 
 ### Fase 5 — Adaptador de minería/pool en modo simulado
 **Entregables:** interfaz MinerAdapter/PoolAdapter; proveedor simulado determinista; estados de sesión; shares y recompensas etiquetadas.
