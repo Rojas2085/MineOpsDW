@@ -8,6 +8,11 @@ from mineops_dw.adapters.mining import (
     SimulatedMinerPoolAdapter,
     SimulationStepResult,
 )
+from mineops_dw.adapters.pool_http import (
+    MinerExecutionGuard,
+    PoolStatusSnapshot,
+    ReadOnlyHttpPoolAdapter,
+)
 from mineops_dw.adapters.sensors import (
     HostResourceSensorAdapter,
     LhmSensorAdapter,
@@ -19,7 +24,10 @@ __all__ = [
     "HostResourceSensorAdapter",
     "LhmSensorAdapter",
     "MinerAdapter",
+    "MinerExecutionGuard",
     "PoolAdapter",
+    "PoolStatusSnapshot",
+    "ReadOnlyHttpPoolAdapter",
     "SensorAdapter",
     "SimulatedMinerPoolAdapter",
     "SimulationStepResult",

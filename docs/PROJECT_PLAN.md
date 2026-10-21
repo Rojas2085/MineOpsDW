@@ -37,11 +37,10 @@ Aplicación local de PC para telemetría, registro histórico, estado de minerí
 **Pruebas ejecutadas:** `tests/test_phase5_simulated_mining.py` probando pérdida de conexión, shares aceptadas/rechazadas, reconexión, idempotencia de sincronización en SQLite, reproducibilidad por semilla y separación de estados financieros.
 **Aceptación:** flujo completo probado y persistido sin instalar ni ejecutar ningún minero real.
 
-### Fase 6 — Integración real opcional
-**Entregables:** adaptador para una fuente/minero/pool elegido por el usuario; guía de instalación verificada; límites de carga/temperatura/tiempo.
-**Pruebas:** integración controlada y de baja duración, cancelación segura, reconexión, logs sin secretos.
-**Aceptación:** requiere autorización expresa; el minero no se instala ni inicia automáticamente; métricas se comparan con la fuente del pool.
-**Puerta:** si no hay hardware compatible, mantener el adaptador simulado y documentar la limitación.
+### Fase 6 — Integración real opcional (Completada con puerta de hardware; pendiente de aprobación del usuario)
+**Entregables completados:** `MinerExecutionGuard` (que impide iniciar o instalar mineros reales sin autorización expresa y aplica la puerta de hardware al no existir un ASIC `SHA-256` en el Ryzen 5 5600GT) y `ReadOnlyHttpPoolAdapter` en `src/mineops_dw/adapters/pool_http.py` para consulta HTTP de solo lectura con reintentos acotados y logs libres de secretos.
+**Pruebas ejecutadas:** `tests/test_phase6_pool_guard.py` verificando el bloqueo por defecto de ejecución real, modo desconectado, reconexión tras fallo transitorio y redacción de tokens en logs.
+**Aceptación:** ningún minero real se instala ni inicia automáticamente; se mantiene el adaptador simulado activo por la puerta de hardware documentada.
 
 ### Fase 7 — Dashboard responsive
 **Entregables:** panel izquierdo recursos, centro estado de sesión/minería, derecha precio BTC y variación; historial y filtros.
