@@ -22,11 +22,10 @@ Aplicación local de PC para telemetría, registro histórico, estado de minerí
 **Pruebas ejecutadas:** `tests/test_phase2_domain_storage.py` cubriendo CRUD, migración desde base vacía, rollback automático en fallo, integridad de claves foráneas, timestamps UTC, prohibición de `float` en finanzas e idempotencia ante duplicados.
 **Aceptación:** datos persistidos y recuperables tras reinicio; ningún dato inexistente se rellena como real (`value=None` y `status='unavailable'` exigidos por dominio y `CHECK` de SQLite).
 
-### Fase 3 — Telemetría del PC
-**Entregables:** adaptador CPU/RAM/procesos; GPU si hay fuente compatible; temperatura/potencia por sensores disponibles; estado de calidad.
-**Pruebas:** sensor presente/ausente, fallo de sensor, timeout, rango inválido, permisos insuficientes, uso de CPU del colector.
-**Aceptación:** cada métrica tiene unidad, fuente, estado y timestamp; ausencia de sensor no rompe el agente.
-**Nota:** no asumir que la GPU integrada o la placa exponen sensores a todas las bibliotecas.
+### Fase 3 — Telemetría del PC (Completada; pendiente de aprobación del usuario)
+**Entregables completados:** `HostResourceSensorAdapter` (con soporte `psutil` y respaldo nativo `win32_ctypes` en Windows 11 para RAM/CPU cuando `psutil` no está instalado) y `LhmSensorAdapter` para Libre Hardware Monitor (`http://127.0.0.1:8085/data.json`) en `src/mineops_dw/adapters/sensors.py`; cálculo de energía por integración trapezoidal (`compute_energy_measurement`) y evaluador de seguridad (`evaluate_safety_limits`) en `src/mineops_dw/domain/telemetry.py`.
+**Pruebas ejecutadas:** `tests/test_phase3_telemetry.py` verificando sensor presente, sensor ausente, fallo de sensor, timeout HTTP, rechazo de rango inválido (`>100%`), permisos insuficientes (`PermissionError`), cálculo de Wh y baja sobrecarga en Windows.
+**Aceptación:** cada métrica tiene unidad, fuente, estado y timestamp UTC; la ausencia de un sensor o de LHM se registra como `unavailable` sin romper el agente.
 
 ### Fase 4 — Servicio de colección y API local
 **Entregables:** servicio de muestreo configurable, API REST, OpenAPI, endpoint health, autenticación local si se habilita acceso fuera de loopback.

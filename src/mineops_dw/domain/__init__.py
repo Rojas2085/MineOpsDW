@@ -19,6 +19,11 @@ from mineops_dw.domain.models import (
     normalize_decimal_str,
     normalize_utc_timestamp,
 )
+from mineops_dw.domain.telemetry import (
+    SafetyEvaluation,
+    compute_energy_measurement,
+    evaluate_safety_limits,
+)
 
 __all__ = [
     "DataMode",
@@ -32,8 +37,11 @@ __all__ = [
     "QualityStatus",
     "RewardSnapshot",
     "RewardStage",
+    "SafetyEvaluation",
     "SessionState",
     "SettlementStatus",
+    "compute_energy_measurement",
+    "evaluate_safety_limits",
     "normalize_decimal_str",
     "normalize_utc_timestamp",
 ]
