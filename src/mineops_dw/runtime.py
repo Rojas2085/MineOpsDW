@@ -10,7 +10,9 @@ import signal
 import threading
 import time
 
+from mineops_dw.adapters.binance import BinanceDepositReadOnlyAdapter
 from mineops_dw.adapters.mining import SimulatedMinerPoolAdapter
+from mineops_dw.adapters.prices import MarketPriceAdapter
 from mineops_dw.adapters.sensors import HostResourceSensorAdapter, LhmSensorAdapter
 from mineops_dw.api.server import LocalHttpServer, MineOpsApiService
 from mineops_dw.collector.service import PeriodicCollectorScheduler, TelemetryCollectorService
@@ -113,6 +115,42 @@ def bootstrap_demo_simulation(
     return session.id
 
 
+def bootstrap_real_mode(
+    repository: MineOpsRepository,
+    collector: TelemetryCollectorService,
+    settings: AppSettings,
+) -> None:
+    """Collect real host telemetry, live BTC market price, and read-only Binance status (no simulation)."""
+    # 1. Two real host telemetry cycles so Win32 CPU delta and RAM are measured immediately
+    collector.collect_once(active_session_id=None)
+    time.sleep(0.25)
+    collector.collect_once(active_session_id=None)
+
+    # 2. Fetch live BTC/USD market price (and BOB at official reference 6.96)
+    price_adapter = MarketPriceAdapter(usd_to_bob_rate=Decimal("6.96"))
+    for snap in price_adapter.fetch_prices(include_bob=True):
+        repository.insert_price_snapshot(snap)
+
+    # 3. Poll read-only Binance deposit history if configured in .env
+    binance_adapter = BinanceDepositReadOnlyAdapter(
+        api_key=settings.binance_read_only_api_key,
+        api_secret=settings.binance_read_only_api_secret,
+    )
+    dep_result = binance_adapter.fetch_deposit_history(coin="BTC")
+    for dep_event in dep_result.deposits:
+        repository.insert_payment_event(dep_event)
+
+    # 4. Generate initial 30-minute real-mode analytical report
+    now_dt = datetime.now(UTC)
+    win_start, win_end = align_window_utc(now_dt, interval_minutes=settings.report_interval_minutes)
+    rep_gen = PeriodicReportGenerator(
+        repository,
+        sample_interval_seconds=settings.sample_interval_seconds,
+        electricity_Wait_rate_usd_per_kwh=Decimal("0.12"),
+    )
+    rep_gen.generate_window_report(win_start, win_end, data_mode="real")
+
+
 def run_local_service(settings: AppSettings | None = None) -> None:
     """Start SQLite, collector scheduler, and HTTP server on 127.0.0.1 until interrupted."""
     cfg = settings or load_settings(env_file=Path(".env"))
@@ -133,7 +171,11 @@ def run_local_service(settings: AppSettings | None = None) -> None:
         settings=cfg,
     )
 
-    session_id = bootstrap_demo_simulation(repo, collector)
+    if cfg.telemetry_mode == "real":
+        bootstrap_real_mode(repo, collector, cfg)
+        session_id = "none (real mode)"
+    else:
+        session_id = bootstrap_demo_simulation(repo, collector)
 
     scheduler = PeriodicCollectorScheduler(
         collector=collector,

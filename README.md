@@ -37,10 +37,21 @@ Proyecto de monitorización experimental de minería, telemetría de hardware, D
 - No ejecutar ni instalar mineros automáticamente sin aprobación explícita.
 - Cada fase debe dejar pruebas ejecutadas y documentación actualizada.
 
-## Ejecución de pruebas y validación (Fase 1)
+## Ejecución de pruebas y validación (Fases 1 a 12)
 Desde PowerShell en la raíz del proyecto:
 
 ```powershell
 python -m compileall src tests
-python -m pytest
+python -m pytest -v
 ```
+
+## Cómo iniciar el servidor y el Dashboard Local (`127.0.0.1:8765`)
+```powershell
+$env:PYTHONPATH = "src"
+python -m mineops_dw
+```
+Luego abre en tu navegador:
+- **Dashboard Web Responsive:** `http://127.0.0.1:8765/`
+- **Estado de Salud:** `http://127.0.0.1:8765/health`
+- **Especificación OpenAPI 3.1:** `http://127.0.0.1:8765/openapi.json`
+- **Conciliación Pool / Binance:** `http://127.0.0.1:8765/api/v1/reconciliation`

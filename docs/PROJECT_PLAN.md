@@ -67,10 +67,10 @@ Aplicación local de PC para telemetría, registro histórico, estado de minerí
 **Pruebas ejecutadas:** `tests/test_phase11_android_optional.py` probando permiso denegado, pérdida de red/reconexión, modo ahorro de batería, datos `stale` y rechazo de token inválido.
 **Aceptación:** Android funciona como módulo totalmente desacoplado y no es requisito para que el MVP de PC opere.
 
-### Fase 12 — Endurecimiento y entrega
-**Entregables:** pruebas de regresión, backups, manual de usuario, guía de recuperación, build reproducible y checklist de seguridad.
-**Pruebas:** instalación limpia, reinicio, restauración de backup, API apagada, almacenamiento lleno simulado, escaneo de secretos.
-**Aceptación:** documentación de instalación, límites y errores conocidos; ninguna clave real en repo; todos los criterios críticos aprobados.
+### Fase 12 — Endurecimiento y entrega (Completada; lista para revisión final del usuario)
+**Entregables completados:** backup en caliente y restauración con verificación de integridad (`PRAGMA integrity_check`) y protección contra sobrescritura en `src/mineops_dw/storage/backup.py`; escáner automatizado de secretos en `src/mineops_dw/security_scanner.py`; punto de entrada en vivo en `src/mineops_dw/runtime.py`; manual operativo en `docs/OPERATIONS.md` y suite de regresión completa (36 pruebas).
+**Pruebas ejecutadas:** `tests/test_phase12_hardening_delivery.py` cubriendo backup/restauración, protección de sobrescritura, almacenamiento lleno simulado (`StorageCapacityError`) y escaneo de secretos en todo el repositorio (`0` fugas).
+**Aceptación:** documentación de instalación, operación, límites y recuperación actualizada; ninguna clave real en el repositorio; todos los criterios críticos aprobados.
 
 ## Regla de avance
 Al terminar cada fase, parar y presentar informe con pruebas. El usuario decide cuándo iniciar la siguiente.

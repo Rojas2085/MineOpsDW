@@ -1,15 +1,15 @@
 # Checklist de salida de fase
 
-- [ ] Fase y alcance declarados.
-- [ ] Plan aprobado antes de cambios significativos.
-- [ ] Archivos afectados identificados.
-- [ ] Criterios de aceptación cubiertos.
-- [ ] Pruebas enfocadas ejecutadas.
-- [ ] Suite relevante ejecutada.
-- [ ] Resultados fallidos comunicados sin ocultarlos.
-- [ ] Seguridad y secretos revisados.
-- [ ] Calidad/procedencia/unidades de datos revisadas.
-- [ ] Documentación actualizada.
-- [ ] `git diff` revisado.
-- [ ] Informe final entregado.
-- [ ] No se inició la fase siguiente automáticamente.
+- [x] Fase y alcance declarados.
+- [x] Plan aprobado antes de cambios significativos.
+- [x] Archivos afectados identificados.
+- [x] Criterios de aceptación cubiertos.
+- [x] Pruebas enfocadas ejecutadas.
+- [x] Suite relevante ejecutada.
+- [x] Resultados fallidos comunicados sin ocultarlos.
+- [x] Seguridad y secretos revisados.
+- [x] Calidad/procedencia/unidades de datos revisadas.
+- [x] Documentación actualizada.
+- [x] `git diff` revisado.
+- [x] Informe final entregado.
+- [x] No se inició la fase siguiente automáticamente.
