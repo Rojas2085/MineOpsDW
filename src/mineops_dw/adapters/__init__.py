@@ -2,6 +2,13 @@
 
 from __future__ import annotations
 
+from mineops_dw.adapters.binance import (
+    BINANCE_DEPOSIT_HISTORY_PATH,
+    BinanceConnectionStatus,
+    BinanceDepositFetchResult,
+    BinanceDepositReadOnlyAdapter,
+    ExchangeReadOnlyAdapter,
+)
 from mineops_dw.adapters.mining import (
     MinerAdapter,
     PoolAdapter,
@@ -22,6 +29,11 @@ from mineops_dw.adapters.sensors import (
 )
 
 __all__ = [
+    "BINANCE_DEPOSIT_HISTORY_PATH",
+    "BinanceConnectionStatus",
+    "BinanceDepositFetchResult",
+    "BinanceDepositReadOnlyAdapter",
+    "ExchangeReadOnlyAdapter",
     "HostResourceSensorAdapter",
     "LhmSensorAdapter",
     "MarketPriceAdapter",

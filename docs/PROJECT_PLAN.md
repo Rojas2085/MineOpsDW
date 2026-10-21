@@ -57,11 +57,10 @@ Aplicación local de PC para telemetría, registro histórico, estado de minerí
 **Pruebas ejecutadas:** `tests/test_phase9_prices_economics.py` verificando API caída, respuesta inválida, precio `stale`, conversión sin dato de FX, cálculos de unidades y coste eléctrico `unavailable` cuando falta potencia.
 **Aceptación:** valor de recompensa estimada separado del ingreso confirmado; el coste eléctrico jamás se inventa si falta medición de potencia/energía.
 
-### Fase 10 — Binance de solo lectura
-**Entregables:** configuración local segura, consulta de depósitos/historial si la API disponible lo permite, pantalla de conciliación.
-**Pruebas:** sin clave, clave inválida, permisos insuficientes, timeout, respuesta vacía, paginación, secretos ausentes de logs.
-**Aceptación:** solo lectura; no se habilitan permisos de trading/retiro; no se guarda ni muestra información innecesaria.
-**Puerta:** verificar documentación oficial vigente y restricciones de cuenta/región antes de implementar.
+### Fase 10 — Binance de solo lectura (Completada; pendiente de aprobación del usuario)
+**Entregables completados:** `BinanceDepositReadOnlyAdapter` en `src/mineops_dw/adapters/binance.py` (firmado HMAC-SHA256 sobre `GET /sapi/v1/capital/deposit/hisrec`, sin ningún endpoint de retiro/trading, modo `disconnected` sin credenciales y redacción de secretos/firmas), motor de conciliación `reconcile_payouts_and_deposits` en `src/mineops_dw/domain/reconciliation.py` y endpoint `GET /api/v1/reconciliation`.
+**Pruebas ejecutadas:** `tests/test_phase10_binance_reconciliation.py` cubriendo modo sin clave (`disconnected`), clave inválida/permisos insuficientes (`401`), timeout, respuesta vacía, paginación, conciliación estricta por `txId` + monto + timestamp y ausencia total de secretos en logs.
+**Aceptación:** estrictamente solo lectura; no se habilitan permisos de trading ni retiro; no se guarda ni expone información sensible.
 
 ### Fase 11 — Android (opcional)
 **Entregables:** agente Kotlin para batería, temperatura solo si la API/dispositivo lo permite, memoria y estado de carga; envío autenticado al PC.

@@ -25,6 +25,7 @@ from mineops_dw.domain.models import (
     PriceSnapshot,
     RewardSnapshot,
 )
+from mineops_dw.domain.reconciliation import reconcile_payouts_and_deposits
 from mineops_dw.storage.database import SQLiteDatabase
 from mineops_dw.storage.repositories import MineOpsRepository
 
@@ -115,6 +116,8 @@ class MineOpsApiService:
                 return self._get_rewards(query)
             if method == "GET" and path == "/api/v1/payments":
                 return self._get_payments(query)
+            if method == "GET" and path == "/api/v1/reconciliation":
+                return self._get_reconciliation()
             if method == "GET" and path == "/api/v1/prices":
                 return self._get_prices(query)
             if method == "GET" and path == "/api/v1/reports":
@@ -217,6 +220,34 @@ class MineOpsApiService:
         return ApiResponse(
             status_code=HTTPStatus.OK,
             body={"count": len(events), "items": [e.model_dump() for e in events]},
+        )
+
+    def _get_reconciliation(self) -> ApiResponse:
+        events = self._repo.list_payment_events()
+        report = reconcile_payouts_and_deposits(events)
+        return ApiResponse(
+            status_code=HTTPStatus.OK,
+            body={
+                "binance_configured": self._settings.is_binance_configured,
+                "matched_count": len(report.matched),
+                "unmatched_payouts_count": len(report.unmatched_payouts),
+                "unmatched_deposits_count": len(report.unmatched_deposits),
+                "matched": [
+                    {
+                        "payout_id": m.payout_id,
+                        "deposit_id": m.deposit_id,
+                        "asset": m.asset,
+                        "payout_amount": m.payout_amount,
+                        "deposit_amount": m.deposit_amount,
+                        "external_reference": m.external_reference,
+                        "payout_at_utc": m.payout_at_utc,
+                        "deposit_at_utc": m.deposit_at_utc,
+                    }
+                    for m in report.matched
+                ],
+                "unmatched_payouts": [p.model_dump() for p in report.unmatched_payouts],
+                "unmatched_deposits": [d.model_dump() for d in report.unmatched_deposits],
+            },
         )
 
     def _get_prices(self, query: dict[str, str]) -> ApiResponse:

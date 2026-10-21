@@ -20,6 +20,11 @@ from mineops_dw.domain.models import (
     normalize_decimal_str,
     normalize_utc_timestamp,
 )
+from mineops_dw.domain.reconciliation import (
+    MatchedPayoutDeposit,
+    ReconciliationReport,
+    reconcile_payouts_and_deposits,
+)
 from mineops_dw.domain.telemetry import (
     SafetyEvaluation,
     compute_energy_measurement,
@@ -29,6 +34,7 @@ from mineops_dw.domain.telemetry import (
 __all__ = [
     "DataMode",
     "EconomicEvaluation",
+    "MatchedPayoutDeposit",
     "Measurement",
     "MiningSession",
     "PaymentEvent",
@@ -37,6 +43,7 @@ __all__ = [
     "PoolShare",
     "PriceSnapshot",
     "QualityStatus",
+    "ReconciliationReport",
     "RewardSnapshot",
     "RewardStage",
     "SafetyEvaluation",
@@ -47,4 +54,5 @@ __all__ = [
     "evaluate_safety_limits",
     "normalize_decimal_str",
     "normalize_utc_timestamp",
+    "reconcile_payouts_and_deposits",
 ]
