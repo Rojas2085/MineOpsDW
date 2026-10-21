@@ -17,10 +17,10 @@ Aplicación local de PC para telemetría, registro histórico, estado de minerí
 **Pruebas ejecutadas:** compilación limpia con `python -m compileall src tests` y ejecución de `python -m pytest` (6 pruebas pasadas).
 **Aceptación:** cualquier desarrollador puede abrir el proyecto y ejecutar los comandos documentados desde Windows sin instalar paquetes nuevos.
 
-### Fase 2 — Modelo de dominio y almacenamiento
-**Entregables:** entidades Measurement, MiningSession, PoolShare, RewardSnapshot, PriceSnapshot, PaymentEvent; SQLite y migraciones versionadas.
-**Pruebas:** CRUD, migración desde base vacía, rollback en fallo, integridad de claves, timestamps UTC, duplicados/idempotencia.
-**Aceptación:** datos persistidos y recuperables tras reinicio; ningún dato inexistente se rellena como real.
+### Fase 2 — Modelo de dominio y almacenamiento (Completada; pendiente de aprobación del usuario)
+**Entregables completados:** entidades `Measurement`, `MiningSession`, `PoolShare`, `RewardSnapshot`, `PriceSnapshot`, `PaymentEvent` y `PeriodicReport` en `src/mineops_dw/domain/models.py`; gestor SQLite en modo `WAL` con migraciones transaccionales y rollback en `src/mineops_dw/storage/database.py`; esquema inicial `0001_initial_schema.sql`; y repositorios parametrizados e idempotentes en `src/mineops_dw/storage/repositories.py`.
+**Pruebas ejecutadas:** `tests/test_phase2_domain_storage.py` cubriendo CRUD, migración desde base vacía, rollback automático en fallo, integridad de claves foráneas, timestamps UTC, prohibición de `float` en finanzas e idempotencia ante duplicados.
+**Aceptación:** datos persistidos y recuperables tras reinicio; ningún dato inexistente se rellena como real (`value=None` y `status='unavailable'` exigidos por dominio y `CHECK` de SQLite).
 
 ### Fase 3 — Telemetría del PC
 **Entregables:** adaptador CPU/RAM/procesos; GPU si hay fuente compatible; temperatura/potencia por sensores disponibles; estado de calidad.
