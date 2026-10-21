@@ -42,10 +42,10 @@ Aplicación local de PC para telemetría, registro histórico, estado de minerí
 **Pruebas ejecutadas:** `tests/test_phase6_pool_guard.py` verificando el bloqueo por defecto de ejecución real, modo desconectado, reconexión tras fallo transitorio y redacción de tokens en logs.
 **Aceptación:** ningún minero real se instala ni inicia automáticamente; se mantiene el adaptador simulado activo por la puerta de hardware documentada.
 
-### Fase 7 — Dashboard responsive
-**Entregables:** panel izquierdo recursos, centro estado de sesión/minería, derecha precio BTC y variación; historial y filtros.
-**Pruebas:** estados loading/error/empty, datos no disponibles, layout móvil/desktop, accesibilidad básica, actualización sin duplicados.
-**Aceptación:** los gráficos muestran estado/calidad; no mezclan porcentajes con watts en un gráfico circular.
+### Fase 7 — Dashboard responsive (Completada; pendiente de aprobación del usuario)
+**Entregables completados:** código fuente React + TypeScript tipado en `frontend/` (`package.json`, `tsconfig.json`, `src/types/api.ts`, `src/App.tsx`) y dashboard web responsive servido directamente en `http://127.0.0.1:8765/` (`src/mineops_dw/api/dashboard_ui.py`), con panel izquierdo de recursos, panel central de sesión/minería con los 4 estados financieros separados, y panel derecho de precio BTC, variación, historial y filtros.
+**Pruebas ejecutadas:** `tests/test_phase7_dashboard.py` verificando estados `loading`/`error`/`empty`/`unavailable`, layout responsive móvil/desktop, atributos de accesibilidad (`aria-live`), actualización con deduplicación y separación estricta de unidades (`%`, `MiB`, `°C`, `W`/`Wh`).
+**Aceptación:** los gráficos y tarjetas muestran insignias de estado/calidad (`measured`, `estimated`, `unavailable`, `simulated`) y nunca mezclan porcentajes con vatios.
 
 ### Fase 8 — Reportes automáticos de 30 minutos
 **Entregables:** reporte versionado con métricas, máximos, huecos, shares, precios, coste eléctrico si hay datos y estado de calidad.

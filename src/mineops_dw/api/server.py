@@ -13,6 +13,7 @@ from typing import Any
 from urllib.parse import parse_qs, urlparse
 
 from mineops_dw import __version__
+from mineops_dw.api.dashboard_ui import DASHBOARD_HTML, DASHBOARD_JS
 from mineops_dw.collector.service import TelemetryCollectorService
 from mineops_dw.config import LOOPBACK_HOSTS, AppSettings
 from mineops_dw.domain.models import (
@@ -35,7 +36,8 @@ class ApiResponse:
     """Structured HTTP response produced by MineOpsApiService."""
 
     status_code: int
-    body: dict[str, Any]
+    body: dict[str, Any] | str
+    content_type: str = "application/json; charset=utf-8"
 
 
 class MineOpsApiService:
@@ -86,6 +88,18 @@ class MineOpsApiService:
         query = {k: v[0] for k, v in parse_qs(parsed.query).items() if v}
 
         try:
+            if method == "GET" and path in {"/", "/index.html"}:
+                return ApiResponse(
+                    status_code=HTTPStatus.OK,
+                    body=DASHBOARD_HTML,
+                    content_type="text/html; charset=utf-8",
+                )
+            if method == "GET" and path == "/dashboard.js":
+                return ApiResponse(
+                    status_code=HTTPStatus.OK,
+                    body=DASHBOARD_JS,
+                    content_type="application/javascript; charset=utf-8",
+                )
             if method == "GET" and path == "/health":
                 return self._get_health()
             if method == "GET" and path == "/openapi.json":
@@ -391,9 +405,12 @@ class LocalHttpServer:
                     headers=header_dict,
                     body_bytes=raw_body,
                 )
-                payload_bytes = json.dumps(resp.body).encode("utf-8")
+                if isinstance(resp.body, str):
+                    payload_bytes = resp.body.encode("utf-8")
+                else:
+                    payload_bytes = json.dumps(resp.body).encode("utf-8")
                 self.send_response(resp.status_code)
-                self.send_header("Content-Type", "application/json; charset=utf-8")
+                self.send_header("Content-Type", resp.content_type)
                 self.send_header("Content-Length", str(len(payload_bytes)))
                 self.end_headers()
                 self.wfile.write(payload_bytes)
