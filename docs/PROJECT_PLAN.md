@@ -47,10 +47,10 @@ Aplicación local de PC para telemetría, registro histórico, estado de minerí
 **Pruebas ejecutadas:** `tests/test_phase7_dashboard.py` verificando estados `loading`/`error`/`empty`/`unavailable`, layout responsive móvil/desktop, atributos de accesibilidad (`aria-live`), actualización con deduplicación y separación estricta de unidades (`%`, `MiB`, `°C`, `W`/`Wh`).
 **Aceptación:** los gráficos y tarjetas muestran insignias de estado/calidad (`measured`, `estimated`, `unavailable`, `simulated`) y nunca mezclan porcentajes con vatios.
 
-### Fase 8 — Reportes automáticos de 30 minutos
-**Entregables:** reporte versionado con métricas, máximos, huecos, shares, precios, coste eléctrico si hay datos y estado de calidad.
-**Pruebas:** ventanas exactas, reinicio del servicio, reloj alterado, huecos de datos, no duplicación y reintento.
-**Aceptación:** cada reporte indica periodo, zona horaria, datos ausentes y procedencia.
+### Fase 8 — Reportes automáticos de 30 minutos (Completada; pendiente de aprobación del usuario)
+**Entregables completados:** `PeriodicReportGenerator` y `align_window_utc` en `src/mineops_dw/reporting/generator.py` con soporte de ventanas exactas de 30 minutos en UTC, detección de huecos (`gaps_count`), cobertura (`sample_coverage_pct`), estadísticas por métrica sin rellenar ausentes con ceros, coste eléctrico condicional a datos reales/simulados de energía, persistencia idempotente en SQLite y exportación a JSON/CSV.
+**Pruebas ejecutadas:** `tests/test_phase8_reporting.py` verificando ventanas exactas, reloj alterado, huecos de datos, no duplicación ante reinicio/reintento y exportación JSON/CSV.
+**Aceptación:** cada reporte indica periodo, zona horaria (`UTC`), datos ausentes (`unavailable`) y procedencia (`sources`).
 
 ### Fase 9 — Precio BTC y cálculo económico
 **Entregables:** adaptador de precio de mercado, conversión USD/BOB opcional, coste eléctrico configurable.
