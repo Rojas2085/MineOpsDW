@@ -11,6 +11,7 @@ python -m mineops_dw
 Una vez iniciado:
 - **Dashboard Web Responsive:** `http://127.0.0.1:8765/`
 - **Health Check:** `http://127.0.0.1:8765/health`
+- **Supervisor Térmico y Conector (`CP-04`):** `http://127.0.0.1:8765/api/v1/supervisor/status`
 - **Esquema OpenAPI 3.1:** `http://127.0.0.1:8765/openapi.json`
 - **Conciliación:** `http://127.0.0.1:8765/api/v1/reconciliation`
 

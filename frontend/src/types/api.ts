@@ -9,6 +9,66 @@ export type DataMode = "simulated" | "real";
 export type RewardStage = "estimated" | "pool_reported";
 export type PaymentEventType = "payout_issued" | "deposit_detected" | "reconciliation";
 export type SettlementStatus = "pending" | "confirmed" | "failed" | "unknown";
+export type SupervisorMode =
+  | "PASSIVE_IDLE"
+  | "OBSERVING_UNCONTROLLED"
+  | "ACTIVE_SUPERVISION"
+  | "DEGRADED_WAIT"
+  | "THERMAL_ALERT_UNCONTROLLED"
+  | "EXTERNAL_OVERRIDE_CONFLICT";
+export type ControlAuthorizationState = "NOT_GRANTED" | "GRANTED" | "REVOKED";
+export type MinerCapabilitiesStatus = "AVAILABLE" | "READ_ONLY" | "UNAVAILABLE";
+export type MinerOperationalState =
+  | "RUNNING"
+  | "PAUSED"
+  | "STOPPED"
+  | "STARTING"
+  | "STOPPING"
+  | "UNKNOWN";
+export type ProcessProgressState =
+  | "ADVANCING"
+  | "UNCHANGED_WITHIN_RESOLUTION"
+  | "STALLED_SUSPECTED"
+  | "UNKNOWN";
+
+export interface PayoutProgress {
+  observed_at_utc: string;
+  pool_name: string;
+  coin: string;
+  wallet_address: string;
+  network: string;
+  pending_balance: string | null;
+  payout_threshold: string | null;
+  progress_pct: number | null;
+  status: QualityStatus;
+  quality_note: string | null;
+}
+
+export interface ProfitabilityKpi {
+  gross_income_usd: string | null;
+  electricity_cost_usd: string | null;
+  estimated_fees_usd: string;
+  net_margin_usd: string | null;
+  status: QualityStatus;
+  quality_note: string | null;
+}
+
+export interface SupervisorStatusResponse {
+  evaluated_at_utc: string;
+  connector_configured: boolean;
+  mode: SupervisorMode;
+  authorization_state: ControlAuthorizationState;
+  authorization_generation: number;
+  degraded_reason: string | null;
+  payout: {
+    is_configured: boolean;
+    coin: string;
+    network: string;
+    status_label: string;
+    progress: PayoutProgress;
+  };
+  profitability_kpi: ProfitabilityKpi;
+}
 
 export interface Measurement {
   id: number | null;

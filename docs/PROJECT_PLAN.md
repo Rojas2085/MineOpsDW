@@ -67,10 +67,19 @@ Aplicación local de PC para telemetría, registro histórico, estado de minerí
 **Pruebas ejecutadas:** `tests/test_phase11_android_optional.py` probando permiso denegado, pérdida de red/reconexión, modo ahorro de batería, datos `stale` y rechazo de token inválido.
 **Aceptación:** Android funciona como módulo totalmente desacoplado y no es requisito para que el MVP de PC opere.
 
-### Fase 12 — Endurecimiento y entrega (Completada; lista para revisión final del usuario)
-**Entregables completados:** backup en caliente y restauración con verificación de integridad (`PRAGMA integrity_check`) y protección contra sobrescritura en `src/mineops_dw/storage/backup.py`; escáner automatizado de secretos en `src/mineops_dw/security_scanner.py`; punto de entrada en vivo en `src/mineops_dw/runtime.py`; manual operativo en `docs/OPERATIONS.md` y suite de regresión completa (36 pruebas).
+### Fase 12 — Endurecimiento y entrega (Completada)
+**Entregables completados:** backup en caliente y restauración con verificación de integridad (`PRAGMA integrity_check`) y protección contra sobrescritura en `src/mineops_dw/storage/backup.py`; escáner automatizado de secretos en `src/mineops_dw/security_scanner.py`; punto de entrada en vivo en `src/mineops_dw/runtime.py`; manual operativo en `docs/OPERATIONS.md` y suite de regresión completa.
 **Pruebas ejecutadas:** `tests/test_phase12_hardening_delivery.py` cubriendo backup/restauración, protección de sobrescritura, almacenamiento lleno simulado (`StorageCapacityError`) y escaneo de secretos en todo el repositorio (`0` fugas).
 **Aceptación:** documentación de instalación, operación, límites y recuperación actualizada; ninguna clave real en el repositorio; todos los criterios críticos aprobados.
+
+### Fases 13 a 16 — Conectores de Minería (`MinerConnector`), Supervisor Térmico (`CP-01-A`..`CP-04`, `PARAM-01`..`06`) y Rentabilidad con Mocks (Completadas)
+**Entregables completados:**
+- Contratos ortogonales `MinerConnector`, `MinerSnapshot`, `MinerCapabilities`, `CommandResult` y `ControlAuthorization` (con las 7 precondiciones de `R-03`, incluyendo `process_progress`) en `src/mineops_dw/domain/miner_connector.py`.
+- Adaptadores pasivos de solo lectura probados exclusivamente con mocks: `XMRigApiAdapter` (`CP-01-A` y `CP-02` Opción B ajustada en `src/mineops_dw/adapters/xmrig.py`), `KryptexProcessAdapter` (`src/mineops_dw/adapters/kryptex.py`) y `SRBMinerApiAdapter` (`src/mineops_dw/adapters/srbminer.py`).
+- Configuración aprobada `PARAM-01` a `PARAM-06` (`75.0 °C`, `60.0 °C`, `120 s`, `30 s`, `http://127.0.0.1:18080`, y `payout_* = ""`) en `src/mineops_dw/config.py` y `.env.example`.
+- Motor `ThermalSupervisor` (`src/mineops_dw/domain/thermal_supervisor.py`) con precedencia de `THERMAL_ALERT_UNCONTROLLED` bajo `NOT_GRANTED`/`REVOKED`, histéresis de `75 °C` / `60 °C` / `120 s`, cero reanudación automática, cero reintentos automáticos en pausas inciertas y detección de `EXTERNAL_OVERRIDE_CONFLICT`.
+- Fallback de potencia por TDP (`estimate_power_from_tdp` con `status="estimated"`), `UnmineablePoolBalanceAdapter` (inhibido cuando `PARAM-06` está vacío), `BinancePublicMarketClient` (`/api/v3/ticker/24hr`), `compute_profitability_kpi` (`ProfitabilityKpi`) y endpoint `GET /api/v1/supervisor/status`.
+**Pruebas ejecutadas:** `tests/test_phase13_xmrig_adapter.py`, `tests/test_phase14_thermal_supervisor_and_config.py`, `tests/test_phase15_tdp_pool_and_profitability.py` y `tests/test_phase16_kryptex_and_dashboard_kpis.py` (84 pruebas automatizadas en total, 100% aprobadas con mocks en memoria).
 
 ## Regla de avance
 Al terminar cada fase, parar y presentar informe con pruebas. El usuario decide cuándo iniciar la siguiente.
