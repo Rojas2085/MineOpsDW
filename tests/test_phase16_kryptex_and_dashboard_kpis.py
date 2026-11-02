@@ -2,12 +2,18 @@
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from typing import Any
 
 import httpx
+import pytest
 
-from mineops_dw.adapters import KryptexProcessAdapter, UnmineablePoolBalanceAdapter
+from mineops_dw.adapters import (
+    KryptexProcessAdapter,
+    SRBMinerApiAdapter,
+    UnmineablePoolBalanceAdapter,
+)
 from mineops_dw.api import MineOpsApiService
 from mineops_dw.config import AppSettings
 from mineops_dw.domain import (
@@ -152,3 +158,95 @@ def test_api_supervisor_status_exposes_payout_progress_and_profitability_kpi(
     assert kpi["gross_income_usd"] == "80"
     assert kpi["electricity_cost_usd"] == "10"
     assert kpi["net_margin_usd"] == "70"
+
+
+def test_srbminer_api_adapter_passive_observation_progress_and_local_control_rejection() -> None:
+    now = datetime(2026, 11, 2, 14, 30, 0, tzinfo=UTC)
+    mining_time = {"val": 60}
+    calls: list[tuple[str, str]] = []
+
+    def handler(req: httpx.Request) -> httpx.Response:
+        calls.append((req.method, req.url.path))
+        return httpx.Response(
+            200,
+            json={
+                "miner_version": "2.6.8",
+                "mining_time": mining_time["val"],
+                "algorithms": [
+                    {
+                        "name": "randomx",
+                        "hashrate": {"cpu": {"total": 2450.5}},
+                        "shares": {"accepted": 8, "rejected": 1},
+                        "pool": {"pool": "rx.pool.example:3333"},
+                    }
+                ],
+            },
+        )
+
+    with httpx.Client(transport=httpx.MockTransport(handler)) as client:
+        adapter = SRBMinerApiAdapter(http_client=client, clock=lambda: now)
+        assert isinstance(adapter, MinerConnector)
+
+        s1 = adapter.get_snapshot()
+        assert s1.connection_status == "REACHABLE"
+        assert s1.operational_state == "RUNNING"
+        assert s1.state_confidence == "INFERRED"
+        assert s1.operational_state_quality == "VALID"
+        assert s1.process_progress == "UNKNOWN"
+        assert s1.version == "2.6.8"
+        assert s1.algorithm == "randomx"
+        assert s1.hashrate_10s_hs.value == 2450.5
+        assert s1.hashrate_10s_hs.quality == "VALID"
+        assert s1.shares_good.value == 8
+        assert s1.shares_total.value == 9
+
+        now += timedelta(seconds=10)
+        mining_time["val"] = 70
+        s2 = adapter.get_snapshot()
+        assert s2.process_progress == "ADVANCING"
+
+        caps = adapter.get_capabilities()
+        assert caps.status == "READ_ONLY"
+        assert caps.observe == "CONFIRMED_AVAILABLE"
+        assert caps.pause == "UNVERIFIED_PASSIVELY"
+        assert caps.resume == "UNVERIFIED_PASSIVELY"
+
+        # pause() and resume() reject locally without HTTP I/O
+        before_calls = len(calls)
+        p_res = adapter.pause()
+        r_res = adapter.resume()
+        assert len(calls) == before_calls
+        assert p_res.delivery == "NOT_SENT"
+        assert r_res.delivery == "NOT_SENT"
+
+
+@pytest.mark.parametrize(
+    "bad_payload",
+    [
+        {"algorithms": []},  # missing miner_version
+        {"miner_version": "   ", "algorithms": []},  # blank miner_version
+        {"miner_version": "2.6.8", "algorithms": "not-a-list"},  # invalid algorithms
+        {"miner_version": "2.6.8", "algorithms": [], "is_paused": "no"},  # non-bool is_paused
+    ],
+)
+def test_srbminer_conservative_schema_rejection_and_loopback_validation(
+    bad_payload: dict[str, Any],
+) -> None:
+    def handler(_: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json=bad_payload)
+
+    with httpx.Client(transport=httpx.MockTransport(handler)) as client:
+        adapter = SRBMinerApiAdapter(http_client=client)
+        snap = adapter.get_snapshot()
+        caps = adapter.get_capabilities()
+
+    assert snap.connection_status == "DEGRADED"
+    assert snap.operational_state == "UNKNOWN"
+    assert snap.operational_state_quality == "INVALID"
+    assert caps.status == "UNAVAILABLE"
+
+    with pytest.raises(ValueError):
+        SRBMinerApiAdapter(base_url="http://example.com:21550")
+    with pytest.raises(ValueError):
+        SRBMinerApiAdapter(base_url="https://127.0.0.1:21550")
+

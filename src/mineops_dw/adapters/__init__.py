@@ -38,6 +38,7 @@ from mineops_dw.adapters.prices import (
     MarketPriceAdapter,
     PriceAdapter,
 )
+from mineops_dw.adapters.srbminer import SRBMinerApiAdapter
 from mineops_dw.adapters.xmrig import (
     ShareDelta,
     XMRigApiAdapter,
@@ -78,6 +79,7 @@ __all__ = [
     "SimulatedMinerPoolAdapter",
     "SimulationStepResult",
     "ShareDelta",
+    "SRBMinerApiAdapter",
     "UnmineablePoolBalanceAdapter",
     "XMRigApiAdapter",
     "XMRigApiError",
