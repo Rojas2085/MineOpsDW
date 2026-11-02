@@ -196,3 +196,69 @@ def _multiply_fiat(btc_amount: Decimal, price: Decimal | None) -> str | None:
         return None
     val = (btc_amount * price).quantize(Decimal("0.000001"))
     return normalize_decimal_str(val)
+
+
+@dataclass(frozen=True)
+class ProfitabilityKpi:
+    """Estimated operational profitability and net margin KPI (PROJECT_SPEC Section 7.3)."""
+
+    gross_income_usd: str | None
+    electricity_cost_usd: str | None
+    estimated_fees_usd: str
+    net_margin_usd: str | None
+    status: QualityStatus
+    quality_note: str | None = None
+
+
+def compute_profitability_kpi(
+    *,
+    pending_pool_balance: Decimal | str | None,
+    market_price_usd: Decimal | str | None,
+    electricity_cost_usd: Decimal | str | None,
+    estimated_fees_usd: Decimal | str = "0",
+    is_simulated: bool = False,
+) -> ProfitabilityKpi:
+    """Compute estimated net margin in USD, reporting unavailable (never 0) if cost or income is missing."""
+    fees_dec = Decimal(normalize_decimal_str(estimated_fees_usd))
+    fees_str = normalize_decimal_str(fees_dec)
+
+    if pending_pool_balance is None or market_price_usd is None:
+        gross_dec: Decimal | None = None
+        gross_str: str | None = None
+    else:
+        bal_dec = Decimal(normalize_decimal_str(pending_pool_balance))
+        px_dec = Decimal(normalize_decimal_str(market_price_usd))
+        gross_dec = (bal_dec * px_dec).quantize(Decimal("0.000001"))
+        gross_str = normalize_decimal_str(gross_dec)
+
+    if electricity_cost_usd is None:
+        cost_dec: Decimal | None = None
+        cost_str: str | None = None
+    else:
+        cost_dec = Decimal(normalize_decimal_str(electricity_cost_usd))
+        cost_str = normalize_decimal_str(cost_dec)
+
+    if gross_dec is None or cost_dec is None:
+        missing_parts: list[str] = []
+        if gross_dec is None:
+            missing_parts.append("pool balance or market price")
+        if cost_dec is None:
+            missing_parts.append("electricity cost")
+        return ProfitabilityKpi(
+            gross_income_usd=gross_str,
+            electricity_cost_usd=cost_str,
+            estimated_fees_usd=fees_str,
+            net_margin_usd=None,
+            status="unavailable",
+            quality_note=f"Cannot compute net margin: missing {', '.join(missing_parts)}.",
+        )
+
+    net_dec = (gross_dec - cost_dec - fees_dec).quantize(Decimal("0.000001"))
+    return ProfitabilityKpi(
+        gross_income_usd=gross_str,
+        electricity_cost_usd=cost_str,
+        estimated_fees_usd=fees_str,
+        net_margin_usd=normalize_decimal_str(net_dec),
+        status="simulated" if is_simulated else "estimated",
+        quality_note="Estimated net margin (pool pending balance valuation minus electricity and fees).",
+    )

@@ -54,7 +54,7 @@ flowchart LR
 1. **Collector**: toma muestras periódicas sin bloquear el hilo de la API, adjunta calidad (`measured`, `estimated`, `unavailable`, `simulated`), unidad y procedencia (`source`).
 2. **Domain**: modelos inmutables y reglas de negocio (políticas de parada por límite de temperatura/CPU/tiempo, separación de estados financieros, cálculo de energía y conciliación); no conoce detalles HTTP ni SQL.
 3. **Storage**: SQLite local con modo `WAL` para permitir lecturas concurrentes de la API mientras el Collector escribe series temporales; migraciones SQL numeradas e idempotencia por claves naturales.
-4. **Adapters**: contratos explícitos (`SensorAdapter`, `MinerAdapter`, `PoolAdapter`, `PriceAdapter`, `ExchangeReadOnlyAdapter`) con implementaciones reales y simuladas/mock.
+4. **Adapters**: contratos explícitos (`SensorAdapter`, `MinerAdapter`, `MinerConnector`, `PoolAdapter`, `PriceAdapter`, `ExchangeReadOnlyAdapter`) con implementaciones reales y simuladas/mock. `MinerConnector` (`get_snapshot`, `get_capabilities`, `pause`, `resume`) coexiste con `MinerAdapter` (`SimulatedMinerPoolAdapter`) sin reemplazarlo. `XMRigApiAdapter` implementa `MinerConnector` en modo permanentemente pasivo y de solo lectura (`CP-01-A`, `CP-02` Opción B ajustada), probado exclusivamente con mocks (`httpx.MockTransport`).
 5. **API**: endpoints REST locales documentados con OpenAPI y esquemas Pydantic validados.
 6. **Scheduler**: ejecución periódica con timeout por tarea, manejo de errores aislados (un fallo en LHM o Binance no detiene el muestreo de `psutil`) y reintentos con backoff exponencial acotado.
 7. **Dashboard**: aplicación React + TypeScript que consume exclusivamente la API local.

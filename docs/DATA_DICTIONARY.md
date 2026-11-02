@@ -67,3 +67,19 @@
 - **Separación de modos:** El campo `status = 'simulated'` (y `data_mode = 'simulated'`) impide mezclar pruebas del simulador con telemetría o pagos reales.
 - **Normalización temporal:** Toda marca temporal persistida debe estar en UTC (`ISO-8601`).
 - **Cero secretos:** Nunca almacenar API keys, firmas HMAC, tokens ni rutas privadas del usuario en ninguna entidad.
+
+## Modelos de dominio en memoria para conectores y supervisión (`CP-01-A` y `CP-02`)
+*(Estructuras efímeras en memoria definidas en `src/mineops_dw/domain/miner_connector.py`; no modifican el esquema SQLite actual)*
+
+| Modelo / Tipo | Campos / Valores principales | Significado y restricciones |
+|---|---|---|
+| `MinerOperationalState` | `RUNNING` \| `PAUSED` \| `STOPPED` \| `STARTING` \| `STOPPING` \| `UNKNOWN` | Estado operativo del minero; excluye `DEGRADED`. Un fallo de red produce `UNKNOWN`, nunca `STOPPED` por inferencia. |
+| `ConnectionStatus` | `REACHABLE` \| `UNREACHABLE` \| `DEGRADED` | Estado del transporte HTTP loopback hacia el conector. |
+| `StateConfidence` | `CONFIRMED` \| `INFERRED` \| `UNKNOWN` | Nivel de certeza del estado operativo (`XMRigApiAdapter` solo emite `CONFIRMED` o `UNKNOWN`). |
+| `ProcessProgressState` | `ADVANCING` \| `UNCHANGED_WITHIN_RESOLUTION` \| `STALLED_SUSPECTED` \| `UNKNOWN` | Evidencia de avance temporal del proceso (`uptime`); `STALLED_SUSPECTED` y `UNKNOWN` bloquean `R-03` sin corromper la calidad individual de métricas. |
+| `TelemetryQuality` | `VALID` \| `STALE` \| `UNAVAILABLE` \| `INVALID` \| `SUSPECT` | Calidad individual de cada observación (`MetricObservation`). |
+| `SourceFreshness` | `VERIFIED_FRESH` \| `VERIFIED_STALE` \| `UNVERIFIABLE_NO_SOURCE_TIMESTAMP` | Frescura verificable en origen (`UNVERIFIABLE_NO_SOURCE_TIMESTAMP` en `GET /2/summary` de XMRig). |
+| `MinerCapabilities` | `status` (`AVAILABLE` \| `READ_ONLY` \| `UNAVAILABLE`), `connection_status`, `local_readiness`, `observe`, `state_verification`, `pause`, `resume` | Evidencia de capacidades del conector. En XMRig (`CP-01-A`), `pause` y `resume` son `UNVERIFIED_PASSIVELY` y `status` es `READ_ONLY` (o `UNAVAILABLE`). |
+| `ControlAuthorization` | `state` (`NOT_GRANTED` \| `GRANTED` \| `REVOKED`), `authorization_generation` (`int >= 0`) | Estado efímero en memoria por sesión que gobierna el permiso de pausa térmica supervisada (`R-01..R-05`). |
+| `CommandResult` | `delivery`, `acceptance`, `postcondition`, `pre_snapshot`, `post_snapshot`, `authorization_generation`, `revoked_during_execution`, `causal_attribution` | Resultado estructurado e inmutable de `pause()` y `resume()` (`R-02`). |
+| `SupervisorMode` | `PASSIVE_IDLE` \| `OBSERVING_UNCONTROLLED` \| `ACTIVE_SUPERVISION` \| `DEGRADED_WAIT` \| `THERMAL_ALERT_UNCONTROLLED` \| `EXTERNAL_OVERRIDE_CONFLICT` | Modo operativo del supervisor térmico; `THERMAL_ALERT_UNCONTROLLED` tiene precedencia sobre `DEGRADED_WAIT` cuando no existe autorización activa. |

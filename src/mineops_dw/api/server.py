@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from datetime import UTC, datetime
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -11,11 +11,14 @@ import logging
 import threading
 from typing import Any
 from urllib.parse import parse_qs, urlparse
+import uuid
 
 from mineops_dw import __version__
+from mineops_dw.adapters.mining import SimulatedMinerPoolAdapter
 from mineops_dw.api.dashboard_ui import DASHBOARD_HTML, DASHBOARD_JS
 from mineops_dw.collector.service import TelemetryCollectorService
 from mineops_dw.config import LOOPBACK_HOSTS, AppSettings
+from mineops_dw.domain.miner_connector import MinerConnector
 from mineops_dw.domain.models import (
     Measurement,
     MiningSession,
@@ -26,6 +29,7 @@ from mineops_dw.domain.models import (
     RewardSnapshot,
 )
 from mineops_dw.domain.reconciliation import reconcile_payouts_and_deposits
+from mineops_dw.domain.thermal_supervisor import ThermalSupervisor
 from mineops_dw.storage.database import SQLiteDatabase
 from mineops_dw.storage.repositories import MineOpsRepository
 
@@ -51,12 +55,37 @@ class MineOpsApiService:
         settings: AppSettings,
         collector: TelemetryCollectorService | None = None,
         api_token: str | None = None,
+        simulator: SimulatedMinerPoolAdapter | None = None,
+        supervisor: ThermalSupervisor | None = None,
+        miner_connector: MinerConnector | None = None,
     ) -> None:
         self._db = database
         self._repo = repository
         self._settings = settings
         self._collector = collector
         self._api_token = api_token.strip() if api_token else None
+        self._session_lock = threading.Lock()
+        if supervisor is not None:
+            self._supervisor: ThermalSupervisor | None = supervisor
+        elif miner_connector is not None:
+            self._supervisor = ThermalSupervisor(
+                miner_connector,
+                critical_temp_c=settings.thermal_critical_temp_c,
+                recovery_temp_c=settings.thermal_recovery_temp_c,
+                stability_window_seconds=float(settings.thermal_stability_window_seconds),
+                max_staleness_seconds=float(settings.thermal_max_staleness_seconds),
+            )
+        else:
+            self._supervisor = None
+
+        resolved_sim = simulator
+        if resolved_sim is None and collector is not None and collector.simulator is not None:
+            resolved_sim = collector.simulator
+        if resolved_sim is None and settings.telemetry_mode == "simulated":
+            resolved_sim = SimulatedMinerPoolAdapter(seed=42, scenario_name="live_demo")
+        if collector is not None and collector.simulator is None and resolved_sim is not None:
+            collector.set_simulator(resolved_sim)
+        self._simulator = resolved_sim
 
         if (
             self._settings.allow_non_loopback
@@ -107,6 +136,16 @@ class MineOpsApiService:
                 return ApiResponse(status_code=HTTPStatus.OK, body=self.openapi_schema())
             if method == "GET" and path == "/api/v1/measurements":
                 return self._get_measurements(query)
+            if method == "GET" and path == "/api/v1/sessions":
+                return self._get_sessions(query)
+            if method == "POST" and path == "/api/v1/sessions/start":
+                return self._post_session_start(body_bytes)
+            if method == "POST" and path == "/api/v1/sessions/pause":
+                return self._post_session_pause(body_bytes)
+            if method == "POST" and path == "/api/v1/sessions/resume":
+                return self._post_session_resume(body_bytes)
+            if method == "POST" and path == "/api/v1/sessions/stop":
+                return self._post_session_stop(body_bytes)
             if method == "GET" and path.startswith("/api/v1/sessions/"):
                 session_id = path.removeprefix("/api/v1/sessions/").strip()
                 return self._get_session(session_id)
@@ -122,6 +161,8 @@ class MineOpsApiService:
                 return self._get_prices(query)
             if method == "GET" and path == "/api/v1/reports":
                 return self._get_reports(query)
+            if method == "GET" and path == "/api/v1/supervisor/status":
+                return self._get_supervisor_status()
             if method == "POST" and path == "/api/v1/collect":
                 return self._post_collect(body_bytes)
 
@@ -175,16 +216,231 @@ class MineOpsApiService:
             body={"count": len(items), "items": [m.model_dump() for m in items]},
         )
 
+    def _get_sessions(self, query: dict[str, str]) -> ApiResponse:
+        mode = self._settings.telemetry_mode
+        requested_mode = query.get("data_mode")
+        if requested_mode is not None and requested_mode not in {"simulated", "real"}:
+            raise ValueError("data_mode must be 'simulated' or 'real'.")
+        if mode == "real":
+            effective_mode = "real"
+        else:
+            effective_mode = requested_mode or mode
+
+        limit_raw = query.get("limit", "20")
+        try:
+            limit = int(limit_raw)
+        except ValueError as exc:
+            raise ValueError("Query parameter 'limit' must be an integer.") from exc
+        if not (1 <= limit <= 100):
+            raise ValueError("Query parameter 'limit' must be between 1 and 100.")
+
+        active = self._repo.get_active_session(data_mode=effective_mode)
+        items = self._repo.list_sessions(data_mode=effective_mode, limit=limit)
+        return ApiResponse(
+            status_code=HTTPStatus.OK,
+            body={
+                "telemetry_mode": mode,
+                "active_session": active.model_dump() if active is not None else None,
+                "count": len(items),
+                "items": [s.model_dump() for s in items],
+            },
+        )
+
     def _get_session(self, session_id: str) -> ApiResponse:
         if not session_id:
             raise ValueError("session_id is required.")
         session = self._repo.get_session(session_id)
-        if session is None:
+        if session is None or (
+            self._settings.telemetry_mode == "real" and session.data_mode == "simulated"
+        ):
             return ApiResponse(
                 status_code=HTTPStatus.NOT_FOUND,
                 body={"error": "not_found", "detail": f"Session '{session_id}' not found."},
             )
         return ApiResponse(status_code=HTTPStatus.OK, body={"item": session.model_dump()})
+
+    @staticmethod
+    def _parse_json_body(body_bytes: bytes) -> dict[str, Any]:
+        if not body_bytes:
+            return {}
+        try:
+            payload = json.loads(body_bytes.decode("utf-8"))
+        except Exception as exc:
+            raise ValueError("Request body must be valid JSON.") from exc
+        if not isinstance(payload, dict):
+            raise ValueError("Request body must be a JSON object.")
+        return payload
+
+    def _sync_simulator_with_session(self, session: MiningSession) -> SimulatedMinerPoolAdapter:
+        if self._simulator is None:
+            self._simulator = SimulatedMinerPoolAdapter(seed=42, scenario_name="live_demo")
+            if self._collector is not None:
+                self._collector.set_simulator(self._simulator)
+        curr = self._simulator.current_session()
+        if curr is None or curr.id != session.id:
+            self._simulator.start_session(
+                session_id=session.id,
+                started_at_utc=session.started_at_utc,
+            )
+            if session.session_state == "paused":
+                self._simulator.pause_session(reason=session.stop_reason or "user_paused")
+            elif session.session_state == "stopped":
+                self._simulator.stop_session(
+                    ended_at_utc=session.ended_at_utc,
+                    reason=session.stop_reason or "user_request",
+                )
+        return self._simulator
+
+    def _resolve_target_simulated_session(
+        self, payload: dict[str, Any]
+    ) -> tuple[MiningSession | None, ApiResponse | None]:
+        if self._settings.telemetry_mode != "simulated":
+            return None, ApiResponse(
+                status_code=HTTPStatus.CONFLICT,
+                body={
+                    "error": "mode_conflict",
+                    "detail": "Simulated session operations require TELEMETRY_MODE='simulated'.",
+                },
+            )
+        req_id = str(payload["session_id"]).strip() if payload.get("session_id") else None
+        if req_id:
+            sess = self._repo.get_session(req_id)
+            if sess is None or sess.data_mode != "simulated":
+                return None, ApiResponse(
+                    status_code=HTTPStatus.NOT_FOUND,
+                    body={
+                        "error": "not_found",
+                        "detail": f"Simulated session '{req_id}' not found.",
+                    },
+                )
+            return sess, None
+
+        sess = self._repo.get_active_session(data_mode="simulated")
+        if sess is not None:
+            return sess, None
+
+        recent = self._repo.list_sessions(data_mode="simulated", limit=1)
+        if recent:
+            return recent[0], None
+
+        return None, ApiResponse(
+            status_code=HTTPStatus.NOT_FOUND,
+            body={"error": "no_active_session", "detail": "No simulated mining session found."},
+        )
+
+    def _post_session_start(self, body_bytes: bytes) -> ApiResponse:
+        if self._settings.telemetry_mode != "simulated":
+            return ApiResponse(
+                status_code=HTTPStatus.CONFLICT,
+                body={
+                    "error": "mode_conflict",
+                    "detail": "Cannot start a simulated session when TELEMETRY_MODE is 'real'.",
+                },
+            )
+        payload = self._parse_json_body(body_bytes)
+        with self._session_lock:
+            existing = self._repo.get_active_session(data_mode="simulated")
+            if existing is not None:
+                return ApiResponse(
+                    status_code=HTTPStatus.CONFLICT,
+                    body={
+                        "error": "session_already_active",
+                        "detail": (
+                            f"Simulated session '{existing.id}' is already active "
+                            f"({existing.session_state}). Stop it before starting a new session."
+                        ),
+                    },
+                )
+
+            if payload.get("session_id"):
+                session_id = str(payload["session_id"]).strip()
+                if not session_id.startswith("sim_"):
+                    raise ValueError("Simulated session_id must start with 'sim_'.")
+                if self._repo.get_session(session_id) is not None:
+                    return ApiResponse(
+                        status_code=HTTPStatus.CONFLICT,
+                        body={
+                            "error": "duplicate_session_id",
+                            "detail": f"Session '{session_id}' already exists.",
+                        },
+                    )
+            else:
+                ts_slug = datetime.now(UTC).strftime("%Y%m%d_%H%M%S")
+                session_id = f"sim_sess_{ts_slug}_{uuid.uuid4().hex[:6]}"
+
+            if self._simulator is None:
+                self._simulator = SimulatedMinerPoolAdapter(seed=42, scenario_name="live_demo")
+            if self._collector is not None and self._collector.simulator is None:
+                self._collector.set_simulator(self._simulator)
+
+            session = self._simulator.start_session(session_id=session_id)
+            self._repo.upsert_session(session)
+            return ApiResponse(status_code=HTTPStatus.OK, body={"item": session.model_dump()})
+
+    def _post_session_pause(self, body_bytes: bytes) -> ApiResponse:
+        payload = self._parse_json_body(body_bytes)
+        with self._session_lock:
+            sess, err = self._resolve_target_simulated_session(payload)
+            if err is not None or sess is None:
+                return err  # type: ignore[return-value]
+            if sess.session_state != "running":
+                return ApiResponse(
+                    status_code=HTTPStatus.CONFLICT,
+                    body={
+                        "error": "invalid_transition",
+                        "detail": (
+                            f"Cannot pause session '{sess.id}' while in state '{sess.session_state}'."
+                        ),
+                    },
+                )
+            reason = str(payload.get("reason") or "user_paused").strip() or "user_paused"
+            sim = self._sync_simulator_with_session(sess)
+            updated = sim.pause_session(reason=reason)
+            self._repo.upsert_session(updated)
+            return ApiResponse(status_code=HTTPStatus.OK, body={"item": updated.model_dump()})
+
+    def _post_session_resume(self, body_bytes: bytes) -> ApiResponse:
+        payload = self._parse_json_body(body_bytes)
+        with self._session_lock:
+            sess, err = self._resolve_target_simulated_session(payload)
+            if err is not None or sess is None:
+                return err  # type: ignore[return-value]
+            if sess.session_state != "paused":
+                return ApiResponse(
+                    status_code=HTTPStatus.CONFLICT,
+                    body={
+                        "error": "invalid_transition",
+                        "detail": (
+                            f"Cannot resume session '{sess.id}' while in state '{sess.session_state}'."
+                        ),
+                    },
+                )
+            sim = self._sync_simulator_with_session(sess)
+            updated = sim.resume_session()
+            self._repo.upsert_session(updated)
+            return ApiResponse(status_code=HTTPStatus.OK, body={"item": updated.model_dump()})
+
+    def _post_session_stop(self, body_bytes: bytes) -> ApiResponse:
+        payload = self._parse_json_body(body_bytes)
+        with self._session_lock:
+            sess, err = self._resolve_target_simulated_session(payload)
+            if err is not None or sess is None:
+                return err  # type: ignore[return-value]
+            if sess.session_state not in {"running", "paused"}:
+                return ApiResponse(
+                    status_code=HTTPStatus.CONFLICT,
+                    body={
+                        "error": "invalid_transition",
+                        "detail": (
+                            f"Cannot stop session '{sess.id}' while in state '{sess.session_state}'."
+                        ),
+                    },
+                )
+            reason = str(payload.get("reason") or "user_request").strip() or "user_request"
+            sim = self._sync_simulator_with_session(sess)
+            updated = sim.stop_session(reason=reason)
+            self._repo.upsert_session(updated)
+            return ApiResponse(status_code=HTTPStatus.OK, body={"item": updated.model_dump()})
 
     def _get_shares(self, query: dict[str, str]) -> ApiResponse:
         session_id = query.get("session_id", "").strip()
@@ -268,6 +524,81 @@ class MineOpsApiService:
             body={"count": len(reports), "items": [r.model_dump() for r in reports]},
         )
 
+    def _get_supervisor_status(self) -> ApiResponse:
+        temp_items = self._repo.list_measurements(metric_name="cpu_temp_c", limit=1)
+        latest_temp = temp_items[-1] if temp_items else None
+        payout_info = {
+            "is_configured": self._settings.is_payout_configured,
+            "coin": self._settings.payout_coin,
+            "network": self._settings.payout_network,
+            "status_label": (
+                f"Configurado ({self._settings.payout_coin}/{self._settings.payout_network})"
+                if self._settings.is_payout_configured
+                else "Pendiente de definición por el usuario"
+            ),
+        }
+
+        if self._supervisor is None:
+            now_utc = datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3] + "Z"
+            return ApiResponse(
+                status_code=HTTPStatus.OK,
+                body={
+                    "evaluated_at_utc": now_utc,
+                    "connector_configured": False,
+                    "mode": "PASSIVE_IDLE",
+                    "authorization_state": "NOT_GRANTED",
+                    "authorization_generation": 0,
+                    "degraded_reason": None,
+                    "thermal": {
+                        "quality": (
+                            "VALID"
+                            if (latest_temp and latest_temp.status == "measured" and latest_temp.value is not None)
+                            else "UNAVAILABLE"
+                        ),
+                        "cpu_temp_c": latest_temp.value if latest_temp else None,
+                        "is_critical_thermal": False,
+                        "alert_edge_triggered": False,
+                        "cooldown_elapsed_seconds": 0.0,
+                        "cooldown_ready": False,
+                        "critical_temp_c": self._settings.thermal_critical_temp_c,
+                        "recovery_temp_c": self._settings.thermal_recovery_temp_c,
+                        "stability_window_seconds": self._settings.thermal_stability_window_seconds,
+                        "max_staleness_seconds": self._settings.thermal_max_staleness_seconds,
+                    },
+                    "snapshot": None,
+                    "capabilities": None,
+                    "payout": payout_info,
+                },
+            )
+
+        ev = self._supervisor.step(latest_temp)
+        return ApiResponse(
+            status_code=HTTPStatus.OK,
+            body={
+                "evaluated_at_utc": ev.evaluated_at_utc,
+                "connector_configured": True,
+                "mode": ev.mode,
+                "authorization_state": ev.authorization_state,
+                "authorization_generation": ev.authorization_generation,
+                "degraded_reason": ev.degraded_reason,
+                "thermal": {
+                    "quality": ev.thermal_quality,
+                    "cpu_temp_c": ev.cpu_temp_c,
+                    "is_critical_thermal": ev.is_critical_thermal,
+                    "alert_edge_triggered": ev.alert_edge_triggered,
+                    "cooldown_elapsed_seconds": ev.cooldown_elapsed_seconds,
+                    "cooldown_ready": ev.cooldown_ready,
+                    "critical_temp_c": self._settings.thermal_critical_temp_c,
+                    "recovery_temp_c": self._settings.thermal_recovery_temp_c,
+                    "stability_window_seconds": self._settings.thermal_stability_window_seconds,
+                    "max_staleness_seconds": self._settings.thermal_max_staleness_seconds,
+                },
+                "snapshot": asdict(ev.snapshot) if ev.snapshot is not None else None,
+                "capabilities": asdict(ev.capabilities) if ev.capabilities is not None else None,
+                "payout": payout_info,
+            },
+        )
+
     def _post_collect(self, body_bytes: bytes) -> ApiResponse:
         if self._collector is None:
             raise ValueError("Collector service is not attached to this API instance.")
@@ -325,6 +656,48 @@ class MineOpsApiService:
                         "responses": {"200": {"description": "Measurement list"}},
                     }
                 },
+                "/api/v1/sessions": {
+                    "get": {
+                        "summary": "List active and recent mining sessions for current mode",
+                        "responses": {"200": {"description": "Active session and history"}},
+                    }
+                },
+                "/api/v1/sessions/start": {
+                    "post": {
+                        "summary": "Start a new simulated mining session",
+                        "responses": {
+                            "200": {"description": "Started session"},
+                            "409": {"description": "Conflict or active session already exists"},
+                        },
+                    }
+                },
+                "/api/v1/sessions/pause": {
+                    "post": {
+                        "summary": "Pause a running simulated mining session",
+                        "responses": {
+                            "200": {"description": "Paused session"},
+                            "409": {"description": "Invalid state transition"},
+                        },
+                    }
+                },
+                "/api/v1/sessions/resume": {
+                    "post": {
+                        "summary": "Resume a paused simulated mining session",
+                        "responses": {
+                            "200": {"description": "Resumed session"},
+                            "409": {"description": "Invalid state transition"},
+                        },
+                    }
+                },
+                "/api/v1/sessions/stop": {
+                    "post": {
+                        "summary": "Stop an active simulated mining session",
+                        "responses": {
+                            "200": {"description": "Stopped session"},
+                            "409": {"description": "Invalid state transition"},
+                        },
+                    }
+                },
                 "/api/v1/sessions/{session_id}": {
                     "get": {
                         "summary": "Get mining session by ID",
@@ -362,6 +735,12 @@ class MineOpsApiService:
                     "get": {
                         "summary": "List 30-minute analytical reports",
                         "responses": {"200": {"description": "Periodic report list"}},
+                    }
+                },
+                "/api/v1/supervisor/status": {
+                    "get": {
+                        "summary": "Get thermal supervisor mode, MinerConnector snapshot/capabilities, and payout config status",
+                        "responses": {"200": {"description": "Supervisor and connector observation status"}},
                     }
                 },
                 "/api/v1/collect": {

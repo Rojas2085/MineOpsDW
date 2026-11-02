@@ -103,6 +103,7 @@ def bootstrap_demo_simulation(
     collector.collect_once(active_session_id=session.id)
     time.sleep(0.15)
     collector.collect_once(active_session_id=session.id)
+    collector.set_simulator(sim)
 
     # Generate initial 30-minute window report
     win_start, win_end = align_window_utc(now_dt, interval_minutes=30)
@@ -186,6 +187,7 @@ def run_local_service(settings: AppSettings | None = None) -> None:
         repository=repo,
         settings=cfg,
         collector=collector,
+        simulator=collector.simulator,
     )
     server = LocalHttpServer(
         api_service=api_service,

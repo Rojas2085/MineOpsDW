@@ -59,16 +59,61 @@ class MineOpsRepository:
             ).fetchone()
             if row is None:
                 return None
-            return MiningSession(
-                id=row["id"],
-                started_at_utc=row["started_at_utc"],
-                ended_at_utc=row["ended_at_utc"],
-                session_state=row["session_state"],
-                data_mode=row["data_mode"],
-                miner_name=row["miner_name"],
-                pool_name=row["pool_name"],
-                stop_reason=row["stop_reason"],
-            )
+            return _row_to_session(row)
+
+    def get_active_session(self, data_mode: str | None = None) -> MiningSession | None:
+        """Return the most recent non-terminated ('running' or 'paused') session for the given mode."""
+        with self._db.session() as conn:
+            if data_mode is not None:
+                row = conn.execute(
+                    """
+                    SELECT * FROM mining_sessions
+                    WHERE data_mode = ? AND session_state IN ('running', 'paused')
+                    ORDER BY started_at_utc DESC, id DESC
+                    LIMIT 1;
+                    """,
+                    (data_mode,),
+                ).fetchone()
+            else:
+                row = conn.execute(
+                    """
+                    SELECT * FROM mining_sessions
+                    WHERE session_state IN ('running', 'paused')
+                    ORDER BY started_at_utc DESC, id DESC
+                    LIMIT 1;
+                    """
+                ).fetchone()
+            if row is None:
+                return None
+            return _row_to_session(row)
+
+    def list_sessions(
+        self,
+        data_mode: str | None = None,
+        limit: int = 20,
+    ) -> list[MiningSession]:
+        """List recent mining sessions ordered from newest to oldest."""
+        with self._db.session() as conn:
+            if data_mode is not None:
+                rows = conn.execute(
+                    """
+                    SELECT * FROM mining_sessions
+                    WHERE data_mode = ?
+                    ORDER BY started_at_utc DESC, id DESC
+                    LIMIT ?;
+                    """,
+                    (data_mode, limit),
+                ).fetchall()
+            else:
+                rows = conn.execute(
+                    """
+                    SELECT * FROM mining_sessions
+                    ORDER BY started_at_utc DESC, id DESC
+                    LIMIT ?;
+                    """,
+                    (limit,),
+                ).fetchall()
+            return [_row_to_session(row) for row in rows]
 
     # --- Measurement ---
 
@@ -102,24 +147,30 @@ class MineOpsRepository:
         metric_name: str | None = None,
         limit: int = 100,
     ) -> list[Measurement]:
-        """List stored measurements ordered by observed_at_utc ascending."""
+        """List the most recent stored measurements ordered chronologically (observed_at_utc ASC)."""
         with self._db.session() as conn:
             if metric_name is not None:
                 rows = conn.execute(
                     """
-                    SELECT * FROM measurements
-                    WHERE metric_name = ?
-                    ORDER BY observed_at_utc ASC, id ASC
-                    LIMIT ?;
+                    SELECT * FROM (
+                        SELECT * FROM measurements
+                        WHERE metric_name = ?
+                        ORDER BY observed_at_utc DESC, id DESC
+                        LIMIT ?
+                    )
+                    ORDER BY observed_at_utc ASC, id ASC;
                     """,
                     (metric_name, limit),
                 ).fetchall()
             else:
                 rows = conn.execute(
                     """
-                    SELECT * FROM measurements
-                    ORDER BY observed_at_utc ASC, id ASC
-                    LIMIT ?;
+                    SELECT * FROM (
+                        SELECT * FROM measurements
+                        ORDER BY observed_at_utc DESC, id DESC
+                        LIMIT ?
+                    )
+                    ORDER BY observed_at_utc ASC, id ASC;
                     """,
                     (limit,),
                 ).fetchall()
@@ -391,6 +442,19 @@ class MineOpsRepository:
                 )
                 for row in rows
             ]
+
+
+def _row_to_session(row: sqlite3.Row) -> MiningSession:
+    return MiningSession(
+        id=row["id"],
+        started_at_utc=row["started_at_utc"],
+        ended_at_utc=row["ended_at_utc"],
+        session_state=row["session_state"],
+        data_mode=row["data_mode"],
+        miner_name=row["miner_name"],
+        pool_name=row["pool_name"],
+        stop_reason=row["stop_reason"],
+    )
 
 
 def _row_to_measurement(row: sqlite3.Row) -> Measurement:

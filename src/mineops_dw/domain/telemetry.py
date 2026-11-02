@@ -82,6 +82,68 @@ def compute_energy_measurement(
     )
 
 
+def estimate_power_from_tdp(
+    cpu_percent_measurement: Measurement | None,
+    *,
+    tdp_watts: float = 65.0,
+    kappa: float = 1.0,
+    observed_at_utc: str | datetime | None = None,
+    session_id: str | None = None,
+) -> Measurement:
+    """Estimate CPU package power (W) from CPU load (%) and design TDP when physical sensor is absent.
+
+    Strictly tags output as status='estimated' (or 'simulated' if input is simulated) and
+    source='calculation:tdp_fallback' — never 'measured'.
+    """
+    obs_utc = normalize_utc_timestamp(
+        observed_at_utc
+        if observed_at_utc is not None
+        else (
+            cpu_percent_measurement.observed_at_utc
+            if cpu_percent_measurement is not None
+            else datetime.now(UTC)
+        )
+    )
+    resolved_session = (
+        session_id
+        if session_id is not None
+        else (cpu_percent_measurement.session_id if cpu_percent_measurement is not None else None)
+    )
+
+    if (
+        cpu_percent_measurement is None
+        or cpu_percent_measurement.metric_name != "cpu_percent_total"
+        or cpu_percent_measurement.status == "unavailable"
+        or cpu_percent_measurement.value is None
+        or tdp_watts <= 0.0
+        or kappa <= 0.0
+    ):
+        return Measurement(
+            session_id=resolved_session,
+            metric_name="cpu_package_power_w",
+            value=None,
+            unit="W",
+            status="unavailable",
+            source="calculation:tdp_fallback",
+            observed_at_utc=obs_utc,
+            quality_note="Cannot estimate TDP power: valid cpu_percent_total measurement is unavailable.",
+        )
+
+    cpu_pct = max(0.0, min(100.0, float(cpu_percent_measurement.value)))
+    est_watts = round(tdp_watts * (cpu_pct / 100.0) * kappa, 4)
+    derived_status = "simulated" if cpu_percent_measurement.status == "simulated" else "estimated"
+    return Measurement(
+        session_id=resolved_session,
+        metric_name="cpu_package_power_w",
+        value=est_watts,
+        unit="W",
+        status=derived_status,
+        source="calculation:tdp_fallback",
+        observed_at_utc=obs_utc,
+        quality_note=f"Estimated from CPU load ({cpu_pct:.1f}%) and TDP ({tdp_watts:.1f}W, kappa={kappa:.2f}).",
+    )
+
+
 def evaluate_safety_limits(
     measurements: list[Measurement],
     *,

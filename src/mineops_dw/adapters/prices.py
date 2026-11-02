@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from decimal import Decimal, InvalidOperation
 import logging
+import re
 from typing import Any, Protocol
 
 import httpx
@@ -179,3 +181,132 @@ def _parse_quote_time(raw_time: Any) -> datetime:
         # Milliseconds epoch
         return datetime.fromtimestamp(float(raw_time) / 1000.0, tz=UTC)
     return _parse_utc(normalize_utc_timestamp(str(raw_time)))
+
+
+_SYMBOL_RE = re.compile(r"^[A-Z0-9]{2,12}$")
+
+
+@dataclass(frozen=True)
+class BinanceTicker24h:
+    """Normalized 24-hour public ticker statistics from Binance (/api/v3/ticker/24hr)."""
+
+    observed_at_utc: str
+    symbol: str
+    asset: str
+    quote_asset: str
+    last_price: str | None
+    weighted_avg_price: str | None
+    price_change_pct: str | None
+    status: str
+    quality_note: str | None = None
+
+
+class BinancePublicMarketClient:
+    """Read-only public client for Binance /api/v3/ticker/24hr requiring zero API keys."""
+
+    def __init__(
+        self,
+        *,
+        base_url: str = "https://api.binance.com",
+        timeout_seconds: float = 5.0,
+        http_client: httpx.Client | None = None,
+    ) -> None:
+        if timeout_seconds <= 0 or timeout_seconds > 10.0:
+            raise ValueError("timeout_seconds must be in (0, 10.0].")
+        self._base_url = base_url.rstrip("/")
+        self._timeout_seconds = timeout_seconds
+        self._http_client = http_client
+
+    def fetch_ticker_24h(
+        self,
+        *,
+        asset: str = "BTC",
+        quote_asset: str = "USDT",
+        observed_at_utc: datetime | str | None = None,
+    ) -> tuple[BinanceTicker24h, PriceSnapshot]:
+        """Fetch 24h ticker for {asset}{quote_asset} and return both ticker stats and PriceSnapshot."""
+        clean_asset = asset.strip().upper()
+        clean_quote = quote_asset.strip().upper()
+        symbol = f"{clean_asset}{clean_quote}"
+        if not _SYMBOL_RE.match(clean_asset) or not _SYMBOL_RE.match(clean_quote):
+            raise ValueError(f"Invalid trading pair symbol components: {clean_asset}/{clean_quote}")
+
+        now_iso = normalize_utc_timestamp(observed_at_utc or datetime.now(UTC))
+        snap_id = f"price_{clean_asset}_{clean_quote}_binance_24h_{now_iso}"
+        url = f"{self._base_url}/api/v3/ticker/24hr"
+
+        try:
+            if self._http_client is not None:
+                resp = self._http_client.get(
+                    url, params={"symbol": symbol}, timeout=self._timeout_seconds
+                )
+            else:
+                with httpx.Client(timeout=self._timeout_seconds) as client:
+                    resp = client.get(url, params={"symbol": symbol})
+            resp.raise_for_status()
+            payload: Any = resp.json()
+            if not isinstance(payload, dict) or "lastPrice" not in payload:
+                raise ValueError("Missing 'lastPrice' in /api/v3/ticker/24hr response.")
+
+            last_dec = Decimal(str(payload["lastPrice"]).strip())
+            if not last_dec.is_finite() or last_dec <= Decimal("0"):
+                raise ValueError("Non-positive lastPrice in /api/v3/ticker/24hr response.")
+            last_str = normalize_decimal_str(last_dec)
+
+            w_avg_raw = payload.get("weightedAvgPrice")
+            w_avg_str: str | None = None
+            if w_avg_raw is not None:
+                w_dec = Decimal(str(w_avg_raw).strip())
+                if w_dec.is_finite() and w_dec > Decimal("0"):
+                    w_avg_str = normalize_decimal_str(w_dec)
+
+            pct_raw = payload.get("priceChangePercent")
+            pct_str: str | None = None
+            if pct_raw is not None:
+                p_dec = Decimal(str(pct_raw).strip())
+                if p_dec.is_finite():
+                    pct_str = normalize_decimal_str(p_dec)
+
+            ticker = BinanceTicker24h(
+                observed_at_utc=now_iso,
+                symbol=symbol,
+                asset=clean_asset,
+                quote_asset=clean_quote,
+                last_price=last_str,
+                weighted_avg_price=w_avg_str,
+                price_change_pct=pct_str,
+                status="measured",
+            )
+            snapshot = PriceSnapshot(
+                id=snap_id,
+                asset=clean_asset,
+                quote_asset=clean_quote,
+                price=last_str,
+                status="measured",
+                source="binance_public_24h",
+                observed_at_utc=now_iso,
+            )
+            return ticker, snapshot
+        except (httpx.HTTPError, ValueError, InvalidOperation, TypeError) as exc:
+            logger.warning("Binance 24h ticker fetch failed for %s: %s", symbol, exc)
+            ticker = BinanceTicker24h(
+                observed_at_utc=now_iso,
+                symbol=symbol,
+                asset=clean_asset,
+                quote_asset=clean_quote,
+                last_price=None,
+                weighted_avg_price=None,
+                price_change_pct=None,
+                status="unavailable",
+                quality_note=f"Binance 24h ticker error ({type(exc).__name__}).",
+            )
+            snapshot = PriceSnapshot(
+                id=snap_id,
+                asset=clean_asset,
+                quote_asset=clean_quote,
+                price=None,
+                status="unavailable",
+                source="binance_public_24h",
+                observed_at_utc=now_iso,
+            )
+            return ticker, snapshot

@@ -343,3 +343,57 @@ def test_crud_persistence_across_restart_and_idempotency(tmp_path: Path) -> None
     reports = restarted_repo.list_periodic_reports(data_mode="simulated")
     assert len(reports) == 1
     assert reports[0].sample_coverage_pct == 100.0
+
+
+def test_list_measurements_returns_most_recent_samples_in_chronological_order(
+    tmp_path: Path,
+) -> None:
+    """When total samples exceed limit, list_measurements must return the newest N samples ordered ASC."""
+    db_file = tmp_path / "recent_history.sqlite3"
+    db = SQLiteDatabase(db_file)
+    db.apply_migrations()
+    repo = MineOpsRepository(db)
+
+    base_dt = datetime(2026, 10, 21, 15, 0, 0, tzinfo=timezone.utc)
+
+    # Insert 12 sequential CPU samples (values 10.0 .. 21.0) and 6 RAM samples
+    for idx in range(12):
+        ts = base_dt + timedelta(seconds=idx * 10)
+        cpu_sample = Measurement(
+            metric_name="cpu_percent_total",
+            value=10.0 + idx,
+            unit="%",
+            status="measured",
+            source="win32_ctypes",
+            observed_at_utc=ts,
+        )
+        assert repo.insert_measurement(cpu_sample) is not None
+        # Verify idempotency: duplicate insert at same (metric_name, source, observed_at_utc) is ignored
+        assert repo.insert_measurement(cpu_sample) is None
+
+        if idx % 2 == 0:
+            ram_sample = Measurement(
+                metric_name="ram_usage_percent",
+                value=50.0 + idx,
+                unit="%",
+                status="measured",
+                source="win32_ctypes",
+                observed_at_utc=ts,
+            )
+            assert repo.insert_measurement(ram_sample) is not None
+
+    # Total rows in DB = 18. Request limit=5 for metric_name='cpu_percent_total'
+    recent_cpu = repo.list_measurements(metric_name="cpu_percent_total", limit=5)
+    assert len(recent_cpu) == 5
+    # Must be the 5 NEWEST CPU values (17.0, 18.0, 19.0, 20.0, 21.0) in chronological ASC order
+    assert [m.value for m in recent_cpu] == [17.0, 18.0, 19.0, 20.0, 21.0]
+    assert [m.observed_at_utc for m in recent_cpu] == sorted(m.observed_at_utc for m in recent_cpu)
+
+    # Request global limit=4 across all metrics -> must be the last 4 inserted samples in chronological order
+    recent_all = repo.list_measurements(limit=4)
+    assert len(recent_all) == 4
+    assert [m.observed_at_utc for m in recent_all] == sorted(m.observed_at_utc for m in recent_all)
+    # The newest sample overall is cpu_percent_total=21.0 at idx=11
+    assert recent_all[-1].metric_name == "cpu_percent_total"
+    assert recent_all[-1].value == 21.0
+
