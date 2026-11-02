@@ -13,6 +13,10 @@ from mineops_dw.adapters.binance import (
     BinanceDepositReadOnlyAdapter,
     ExchangeReadOnlyAdapter,
 )
+from mineops_dw.adapters.kryptex import (
+    DEFAULT_KRYPTEX_PROCESS_NAMES,
+    KryptexProcessAdapter,
+)
 from mineops_dw.adapters.mining import (
     MinerAdapter,
     PoolAdapter,
@@ -57,8 +61,10 @@ __all__ = [
     "BinanceDepositReadOnlyAdapter",
     "BinancePublicMarketClient",
     "BinanceTicker24h",
+    "DEFAULT_KRYPTEX_PROCESS_NAMES",
     "ExchangeReadOnlyAdapter",
     "HostResourceSensorAdapter",
+    "KryptexProcessAdapter",
     "LhmSensorAdapter",
     "MarketPriceAdapter",
     "MinerAdapter",

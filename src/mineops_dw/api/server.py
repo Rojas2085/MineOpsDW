@@ -15,9 +15,11 @@ import uuid
 
 from mineops_dw import __version__
 from mineops_dw.adapters.mining import SimulatedMinerPoolAdapter
+from mineops_dw.adapters.pool_balance import UnmineablePoolBalanceAdapter
 from mineops_dw.api.dashboard_ui import DASHBOARD_HTML, DASHBOARD_JS
 from mineops_dw.collector.service import TelemetryCollectorService
 from mineops_dw.config import LOOPBACK_HOSTS, AppSettings
+from mineops_dw.domain.economics import compute_profitability_kpi
 from mineops_dw.domain.miner_connector import MinerConnector
 from mineops_dw.domain.models import (
     Measurement,
@@ -58,6 +60,7 @@ class MineOpsApiService:
         simulator: SimulatedMinerPoolAdapter | None = None,
         supervisor: ThermalSupervisor | None = None,
         miner_connector: MinerConnector | None = None,
+        pool_balance_adapter: UnmineablePoolBalanceAdapter | None = None,
     ) -> None:
         self._db = database
         self._repo = repository
@@ -65,6 +68,15 @@ class MineOpsApiService:
         self._collector = collector
         self._api_token = api_token.strip() if api_token else None
         self._session_lock = threading.Lock()
+        self._pool_balance_adapter = (
+            pool_balance_adapter
+            if pool_balance_adapter is not None
+            else UnmineablePoolBalanceAdapter(
+                payout_coin=settings.payout_coin,
+                payout_address=settings.payout_address,
+                payout_network=settings.payout_network,
+            )
+        )
         if supervisor is not None:
             self._supervisor: ThermalSupervisor | None = supervisor
         elif miner_connector is not None:
@@ -527,6 +539,33 @@ class MineOpsApiService:
     def _get_supervisor_status(self) -> ApiResponse:
         temp_items = self._repo.list_measurements(metric_name="cpu_temp_c", limit=1)
         latest_temp = temp_items[-1] if temp_items else None
+        payout_progress = self._pool_balance_adapter.fetch_payout_progress()
+
+        # Resolve latest market price and latest report electricity cost for ProfitabilityKpi
+        usd_prices = self._repo.list_price_snapshots(quote_asset="USD")
+        latest_usd_price = (
+            usd_prices[-1].price
+            if (usd_prices and usd_prices[-1].status != "unavailable" and usd_prices[-1].price)
+            else None
+        )
+        reports = self._repo.list_periodic_reports(data_mode=self._settings.telemetry_mode)
+        latest_elec_cost_usd: str | None = None
+        if reports:
+            try:
+                rep_summary = json.loads(reports[-1].summary_json)
+                elec_obj = rep_summary.get("electricity") or {}
+                if elec_obj.get("status") != "unavailable" and elec_obj.get("electricity_cost_usd") is not None:
+                    latest_elec_cost_usd = str(elec_obj["electricity_cost_usd"])
+            except Exception:
+                latest_elec_cost_usd = None
+
+        profitability = compute_profitability_kpi(
+            pending_pool_balance=payout_progress.pending_balance,
+            market_price_usd=latest_usd_price,
+            electricity_cost_usd=latest_elec_cost_usd,
+            is_simulated=(self._settings.telemetry_mode == "simulated"),
+        )
+
         payout_info = {
             "is_configured": self._settings.is_payout_configured,
             "coin": self._settings.payout_coin,
@@ -536,6 +575,7 @@ class MineOpsApiService:
                 if self._settings.is_payout_configured
                 else "Pendiente de definición por el usuario"
             ),
+            "progress": asdict(payout_progress),
         }
 
         if self._supervisor is None:
@@ -568,6 +608,7 @@ class MineOpsApiService:
                     "snapshot": None,
                     "capabilities": None,
                     "payout": payout_info,
+                    "profitability_kpi": asdict(profitability),
                 },
             )
 
@@ -596,6 +637,7 @@ class MineOpsApiService:
                 "snapshot": asdict(ev.snapshot) if ev.snapshot is not None else None,
                 "capabilities": asdict(ev.capabilities) if ev.capabilities is not None else None,
                 "payout": payout_info,
+                "profitability_kpi": asdict(profitability),
             },
         )
 
