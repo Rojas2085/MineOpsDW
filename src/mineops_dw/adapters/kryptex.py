@@ -13,7 +13,9 @@ Strictly enforces:
 from __future__ import annotations
 
 from collections.abc import Callable, Iterable
+import ctypes
 from datetime import UTC, datetime
+import sys
 from typing import Any
 import uuid
 
@@ -67,12 +69,21 @@ class KryptexProcessAdapter:
             if self._process_iter_fn is not None:
                 entries = list(self._process_iter_fn())
             else:
-                import psutil  # type: ignore[import-not-found]
+                try:
+                    import psutil  # type: ignore[import-not-found]
 
-                entries = [
-                    p.info
-                    for p in psutil.process_iter(["name", "create_time"])
-                ]
+                    entries = [
+                        p.info
+                        for p in psutil.process_iter(["name", "create_time"])
+                    ]
+                except ImportError:
+                    if sys.platform == "win32":
+                        win_entries = _win32_list_process_names()
+                        if win_entries is None:
+                            return False, False, None
+                        entries = win_entries
+                    else:
+                        return False, False, None
         except Exception:
             return False, False, None
 
@@ -213,3 +224,43 @@ class KryptexProcessAdapter:
             post_snapshot=None,
             causal_attribution="NOT_APPLICABLE",
         )
+
+
+class _PROCESSENTRY32W(ctypes.Structure):
+    _fields_ = [
+        ("dwSize", ctypes.c_ulong),
+        ("cntUsage", ctypes.c_ulong),
+        ("th32ProcessID", ctypes.c_ulong),
+        ("th32DefaultHeapID", ctypes.c_size_t),
+        ("th32ModuleID", ctypes.c_ulong),
+        ("cntThreads", ctypes.c_ulong),
+        ("th32ParentProcessID", ctypes.c_ulong),
+        ("pcPriClassBase", ctypes.c_long),
+        ("dwFlags", ctypes.c_ulong),
+        ("szExeFile", ctypes.c_wchar * 260),
+    ]
+
+
+def _win32_list_process_names() -> list[dict[str, Any]] | None:
+    """Zero-dependency Windows Toolhelp32 process enumeration fallback when psutil is absent."""
+    if sys.platform != "win32":
+        return None
+    TH32CS_SNAPPROCESS = 0x00000002
+    INVALID_HANDLE_VALUE = ctypes.c_void_p(-1).value
+    kernel32 = ctypes.windll.kernel32
+    kernel32.CreateToolhelp32Snapshot.restype = ctypes.c_void_p
+    h_snap = kernel32.CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0)
+    if h_snap is None or h_snap == INVALID_HANDLE_VALUE:
+        return None
+    try:
+        entry = _PROCESSENTRY32W()
+        entry.dwSize = ctypes.sizeof(_PROCESSENTRY32W)
+        results: list[dict[str, Any]] = []
+        ok = kernel32.Process32FirstW(ctypes.c_void_p(h_snap), ctypes.byref(entry))
+        while ok:
+            results.append({"name": entry.szExeFile, "create_time": None})
+            ok = kernel32.Process32NextW(ctypes.c_void_p(h_snap), ctypes.byref(entry))
+        return results
+    finally:
+        kernel32.CloseHandle(ctypes.c_void_p(h_snap))
+

@@ -265,7 +265,8 @@ class BinancePublicMarketClient:
             if pct_raw is not None:
                 p_dec = Decimal(str(pct_raw).strip())
                 if p_dec.is_finite():
-                    pct_str = normalize_decimal_str(p_dec)
+                    abs_str = normalize_decimal_str(abs(p_dec))
+                    pct_str = f"-{abs_str}" if p_dec < Decimal("0") and abs_str != "0" else abs_str
 
             ticker = BinanceTicker24h(
                 observed_at_utc=now_iso,

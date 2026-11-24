@@ -34,6 +34,7 @@ class MineOpsRepository:
                     data_mode, miner_name, pool_name, stop_reason
                 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(id) DO UPDATE SET
+                    started_at_utc = excluded.started_at_utc,
                     ended_at_utc = excluded.ended_at_utc,
                     session_state = excluded.session_state,
                     stop_reason = excluded.stop_reason;

@@ -1,0 +1,29 @@
+{
+  "autosave": false,
+  "cpu": {
+    "enabled": true,
+    "huge-pages": true,
+    "priority": 2,
+    "max-threads-hint": 75
+  },
+  "opencl": false,
+  "cuda": false,
+  "http": {
+    "enabled": true,
+    "host": "127.0.0.1",
+    "port": 18080,
+    "access-token": null,
+    "restricted": true
+  },
+  "pools": [
+    {
+      "algo": "rx/0",
+      "coin": null,
+      "url": "rx.unmineable.com:3333",
+      "user": "MONEDA:TU_DIRECCION_PUBLICA.worker_local",
+      "pass": "x",
+      "keepalive": true,
+      "tls": false
+    }
+  ]
+}

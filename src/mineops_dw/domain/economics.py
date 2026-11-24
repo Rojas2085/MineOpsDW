@@ -258,7 +258,7 @@ def compute_profitability_kpi(
         gross_income_usd=gross_str,
         electricity_cost_usd=cost_str,
         estimated_fees_usd=fees_str,
-        net_margin_usd=normalize_decimal_str(net_dec),
+        net_margin_usd=normalize_decimal_str(net_dec, allow_negative=True),
         status="simulated" if is_simulated else "estimated",
         quality_note="Estimated net margin (pool pending balance valuation minus electricity and fees).",
     )

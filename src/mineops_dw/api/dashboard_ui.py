@@ -481,15 +481,54 @@ DASHBOARD_HTML = """<!DOCTYPE html>
     .hidden-view {
       display: none !important;
     }
+    .toast-container {
+      position: fixed;
+      top: 4.5rem;
+      right: 1.25rem;
+      z-index: 9999;
+      display: flex;
+      flex-direction: column;
+      gap: 0.55rem;
+      max-width: 370px;
+      pointer-events: none;
+    }
+    .toast-alert {
+      pointer-events: auto;
+      background: rgba(12, 18, 32, 0.96);
+      border-left: 4px solid var(--electric-blue);
+      border-top: 1px solid var(--border);
+      border-right: 1px solid var(--border);
+      border-bottom: 1px solid var(--border);
+      border-radius: 0.5rem;
+      padding: 0.65rem 0.85rem;
+      color: var(--text);
+      box-shadow: 0 10px 28px rgba(0, 0, 0, 0.55);
+      font-size: 0.78rem;
+      animation: toastSlideIn 0.22s ease-out;
+    }
+    .toast-alert.toast-success { border-left-color: var(--neon-green); }
+    .toast-alert.toast-warn { border-left-color: var(--simulated); }
+    .toast-alert.toast-danger { border-left-color: var(--danger); }
+    .toast-alert strong {
+      display: block;
+      font-family: var(--font-mono);
+      font-size: 0.8rem;
+      margin-bottom: 0.18rem;
+    }
+    @keyframes toastSlideIn {
+      from { transform: translateX(24px); opacity: 0; }
+      to { transform: translateX(0); opacity: 1; }
+    }
   </style>
 </head>
 <body>
+  <div id="toast-alerts-container" class="toast-container" aria-live="assertive" aria-atomic="false"></div>
   <header class="ops-header">
     <div class="brand-block">
       <div class="brand-emblem" aria-hidden="true">DW</div>
       <div>
         <h1>MineOps DW — Mining Operations Center</h1>
-        <div class="brand-subtitle">AMD Ryzen 5 5600GT + Radeon Graphics · Loopback 127.0.0.1 · Telemetría y Análisis BTC</div>
+        <div id="brand-hardware-subtitle" class="brand-subtitle">Hardware Auto-Detectado · Loopback 127.0.0.1 · Telemetría y Análisis BTC</div>
       </div>
     </div>
 
@@ -503,6 +542,7 @@ DASHBOARD_HTML = """<!DOCTYPE html>
 
     <div class="header-controls">
       <span id="global-mode-badge" class="badge badge-simulated" aria-live="polite">MODO: CARGANDO</span>
+      <button id="btn-toggle-sound" class="btn-action" type="button" aria-label="Activar o silenciar alertas sonoras" style="border-color:#00ff9d; color:#00ff9d;">🔔 Alertas: ON</button>
       <button id="btn-collect" class="btn-action primary-collect" type="button" aria-label="Recolectar telemetría ahora">Recolectar telemetría</button>
       <button id="btn-refresh" class="btn-action" type="button" aria-label="Actualizar datos ahora">Actualizar</button>
     </div>
@@ -595,6 +635,73 @@ DASHBOARD_HTML = """<!DOCTYPE html>
               <button id="btn-sim-stop" class="btn-action" type="button" aria-label="Detener sesión simulada" style="border-color:rgba(255,59,92,0.5); color:#ff8fa3;">Detener</button>
             </div>
           </div>
+        </div>
+      </div>
+
+      <div id="performance-mode-card" class="unit-card" aria-label="Selector de modo de rendimiento de minería">
+        <h3>Modo de Rendimiento y Desgaste (CPU / XMRig)</h3>
+        <div class="metric-row">
+          <span>Perfil Activo:</span>
+          <strong id="perf-active-label" class="metric-val" style="color:var(--electric-blue);">Normal (Estado Actual Equilibrado)</strong>
+        </div>
+        <div class="metric-row">
+          <span>Recursos Asignados:</span>
+          <strong id="perf-resources-detail" class="metric-val">Auto-adaptado a CPU · Prioridad 2</strong>
+        </div>
+        <div id="perf-countdown-banner" class="metric-row hidden-view" style="color:#ffb800; font-weight:700;">
+          <span>⚡ MODO RÁPIDO ACTIVO (Alto desgaste):</span>
+          <strong id="perf-countdown-text">Volviendo en 10s...</strong>
+        </div>
+        <div style="display:flex; gap:0.45rem; flex-wrap:wrap; margin-top:0.55rem;" role="group" aria-label="Botones de modo de rendimiento">
+          <button id="btn-perf-bajo" class="btn-action" type="button" style="border-color:#00ff9d; color:#00ff9d;">🟢 Bajo (Menor desgaste)</button>
+          <button id="btn-perf-normal" class="btn-action" type="button" style="border-color:#00d2ff; color:#00d2ff;">🔵 Normal (Actual)</button>
+          <button id="btn-perf-rapido" class="btn-action" type="button" style="border-color:#ffb800; color:#ffb800;">⚡ Rápido (Boost 10s)</button>
+        </div>
+        <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:0.4rem; margin-top:0.55rem; font-size:0.76rem; color:var(--muted);">
+          <label for="select-perf-fallback">Al terminar Rápido (10s) cambiar automáticamente a:</label>
+          <select id="select-perf-fallback" aria-label="Modo de retorno automático tras 10 segundos">
+            <option value="normal">Normal (Equilibrado)</option>
+            <option value="bajo">Bajo (Menor Desgaste)</option>
+          </select>
+        </div>
+      </div>
+
+      <div id="mined-crypto-shares-card" class="unit-card" aria-label="Vista de cripto minada y shares enviados o almacenados">
+        <h3>Cripto Minada y Handshakes / Shares (Pool ↔ SQLite Local)</h3>
+        <div class="metric-row">
+          <span>Cripto Acumulada en Pool:</span>
+          <strong id="crypto-mined-balance" class="metric-val" style="color:var(--neon-green);">Verificando...</strong>
+        </div>
+        <div class="metric-row" style="border-bottom:none; padding-bottom:0.15rem;">
+          <span>Progreso hacia Retiro Automático:</span>
+          <strong id="crypto-mined-threshold" class="metric-val">N/D</strong>
+        </div>
+        <div class="bar-track" style="margin-bottom:0.2rem;">
+          <div id="crypto-mined-progress-bar" class="bar-fill" style="width:0%;"></div>
+        </div>
+        <div style="display:flex; justify-content:space-between; font-family:var(--font-mono); font-size:0.66rem; color:var(--muted); margin-bottom:0.45rem;">
+          <span>5%</span><span>15%</span><span>25%</span><span>35%</span><span>45%</span><span>55%</span><span>65%</span><span>75%</span><span>85%</span><span>95%</span><span>100%</span>
+        </div>
+        <div class="metric-row">
+          <span>Handshakes / Shares Enviados al Pool:</span>
+          <strong id="crypto-shares-sent" class="metric-val">N/D</strong>
+        </div>
+        <div class="metric-row">
+          <span>Algoritmo y Nodo Stratum:</span>
+          <strong id="crypto-pool-node" class="metric-val">N/D</strong>
+        </div>
+        <div class="metric-row">
+          <span>Hashes y Registros Almacenados (SQLite):</span>
+          <strong id="crypto-stored-records" class="metric-val">N/D</strong>
+        </div>
+      </div>
+
+      <div id="pre-presentation-milestones-card" class="unit-card" aria-label="Metas previas a la presentación y verificación de exportación a cartera">
+        <h3>Metas Previas de Presentación + Meta Final (Verificación de Exportación a Binance)</h3>
+        <div id="milestones-list-container">Cargando metas de verificación...</div>
+        <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:0.5rem; margin-top:0.65rem; padding-top:0.5rem; border-top:1px dashed var(--border);">
+          <small id="milestones-export-summary" style="color:var(--muted); font-family:var(--font-mono);">Verifica el flujo Pool → Cartera Destino configurada</small>
+          <button id="btn-verify-milestones" class="btn-action" type="button" style="border-color:#00ff9d; color:#00ff9d;">📤 Verificar Exportación de Metas Alcanzadas</button>
         </div>
       </div>
 
@@ -705,9 +812,46 @@ DASHBOARD_HTML = """<!DOCTYPE html>
 
     <div class="panel">
       <h2>
-        <span>Reportes Analíticos de 30 Minutos</span>
-        <span class="badge badge-estimated">SQLITE DW</span>
+        <span>Reportes Analíticos de 30 Minutos &amp; Exportación Power BI</span>
+        <span class="badge badge-estimated">SQLITE DW → EXCEL → POWER BI</span>
       </h2>
+      <div id="excel-powerbi-export-card" class="unit-card" aria-label="Exportación de reportes en Excel y transformación Power BI">
+        <h3>Reporte Excel (.xlsx) de Minado Activo + Conector Power BI (ETL Opción A)</h3>
+        <div class="metric-row">
+          <span>Total Minado Acumulado (Mientras Activo):</span>
+          <strong id="bi-total-mined" class="metric-val" style="color:var(--neon-green);">Calculando...</strong>
+        </div>
+        <div class="metric-row">
+          <span>Tiempo Activo Registrado / Tasa por Hora:</span>
+          <strong id="bi-active-time-rate" class="metric-val">Calculando...</strong>
+        </div>
+        <div class="metric-row">
+          <span>Promedio Mientras Activo (Hashrate / CPU / RAM):</span>
+          <strong id="bi-active-averages" class="metric-val">Calculando...</strong>
+        </div>
+        <div class="metric-row">
+          <span>Hojas DW en el Excel (.xlsx):</span>
+          <strong id="bi-sheets-info" class="metric-val" style="color:var(--electric-blue);">5 hojas (Resumen, Sesiones, Telemetría, Metas, Dim_Modo)</strong>
+        </div>
+        <div class="metric-row" style="font-size:0.74rem;">
+          <span>Ruta Fija para Power BI Desktop:</span>
+          <code id="bi-excel-path" style="color:#ffb800; word-break:break-all;">data/exports/mineops_dw_reporte_bi.xlsx</code>
+        </div>
+        <div style="display:flex; gap:0.5rem; flex-wrap:wrap; margin-top:0.65rem;">
+          <a id="btn-download-excel" href="/api/v1/exports/excel" download="mineops_dw_reporte_bi.xlsx" class="btn-action primary-collect" style="text-decoration:none; display:inline-block;">📊 Descargar Excel (.xlsx) y Actualizar Power BI</a>
+          <a id="btn-executive-pdf" href="/api/v1/exports/executive-report" target="_blank" rel="noopener" class="btn-action" style="text-decoration:none; display:inline-block; border-color:#ffb800; color:#ffb800;">📄 Informe Ejecutivo (PDF / Imprimir)</a>
+          <button id="btn-refresh-bi-export" class="btn-action" type="button" style="border-color:#00d2ff; color:#00d2ff;">🔄 Sincronizar Archivo para Power BI</button>
+        </div>
+        <details style="margin-top:0.65rem; border-top:1px dashed var(--border); padding-top:0.5rem;">
+          <summary style="cursor:pointer; color:var(--neon-green); font-family:var(--font-mono); font-size:0.78rem; font-weight:700;">Ver Script Power Query (M) y Medidas DAX para pegar en Power BI Desktop</summary>
+          <div style="margin-top:0.5rem;">
+            <div style="font-size:0.74rem; color:var(--muted); margin-bottom:0.25rem;">1. En Power BI Desktop: <strong>Obtener datos → Consulta en blanco → Editor avanzado</strong> y pega este script Power Query (M):</div>
+            <textarea id="bi-powerquery-box" readonly style="width:100%; height:110px; background:#060a12; color:#00ff9d; border:1px solid var(--border); border-radius:0.35rem; font-family:var(--font-mono); font-size:0.7rem; padding:0.4rem;"></textarea>
+            <div style="font-size:0.74rem; color:var(--muted); margin:0.45rem 0 0.25rem;">2. En Power BI Desktop: <strong>Modelado → Nueva medida</strong> y pega estas fórmulas DAX:</div>
+            <textarea id="bi-dax-box" readonly style="width:100%; height:95px; background:#060a12; color:#00d2ff; border:1px solid var(--border); border-radius:0.35rem; font-family:var(--font-mono); font-size:0.7rem; padding:0.4rem;"></textarea>
+          </div>
+        </details>
+      </div>
       <div class="unit-card">
         <h3>Ventanas Periódicas Registradas (/api/v1/reports)</h3>
         <div id="reports-30m-box">Cargando reportes de 30 minutos...</div>
@@ -784,11 +928,55 @@ DASHBOARD_JS = """(function () {
     activeSession: null,
     sessions: [],
     supervisorStatus: null,
+    hostHardware: null,
     lastSafety: null,
     statusFilter: "all",
     metricFilter: "all",
+    soundAlertsEnabled: true,
     activityLogs: []
   };
+
+  function playAlertTone(kind) {
+    if (!state.soundAlertsEnabled) return;
+    try {
+      var AudioCtx = window.AudioContext || window.webkitAudioContext;
+      if (!AudioCtx) return;
+      var ctx = new AudioCtx();
+      var osc = ctx.createOscillator();
+      var gain = ctx.createGain();
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+      if (kind === "danger" || kind === "warn") {
+        osc.type = "triangle";
+        osc.frequency.setValueAtTime(540, ctx.currentTime);
+        osc.frequency.setValueAtTime(420, ctx.currentTime + 0.11);
+      } else {
+        osc.type = "sine";
+        osc.frequency.setValueAtTime(660, ctx.currentTime);
+        osc.frequency.setValueAtTime(880, ctx.currentTime + 0.09);
+      }
+      gain.gain.setValueAtTime(0.08, ctx.currentTime);
+      gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.24);
+      osc.start();
+      osc.stop(ctx.currentTime + 0.25);
+    } catch (e) {}
+  }
+
+  function showToastAlert(title, detail, kind) {
+    var safeKind = kind || "info";
+    playAlertTone(safeKind);
+    var container = document.getElementById("toast-alerts-container");
+    if (!container) return;
+    var el = document.createElement("div");
+    el.className = "toast-alert toast-" + safeKind;
+    el.innerHTML = "<strong>" + title + "</strong><span>" + detail + "</span>";
+    container.appendChild(el);
+    setTimeout(function () {
+      if (el && el.parentNode) {
+        el.parentNode.removeChild(el);
+      }
+    }, 4500);
+  }
 
   function pushLog(msg) {
     var ts = new Date().toISOString().slice(11, 19) + "Z";
@@ -915,7 +1103,23 @@ DASHBOARD_JS = """(function () {
   }
 
   function renderMiningCore(latestByMetric) {
-    var hsMetric = latestByMetric["hashrate_hs"];
+    var hsMetric = latestByMetric["hashrate_hs"] || latestByMetric["miner_hashrate_hs"];
+    if (
+      (!hsMetric || hsMetric.status === "unavailable" || hsMetric.value === null) &&
+      state.supervisorStatus &&
+      state.supervisorStatus.snapshot &&
+      state.supervisorStatus.snapshot.hashrate_10s_hs &&
+      state.supervisorStatus.snapshot.hashrate_10s_hs.quality === "VALID" &&
+      state.supervisorStatus.snapshot.hashrate_10s_hs.value !== null
+    ) {
+      hsMetric = {
+        metric_name: "hashrate_hs",
+        value: state.supervisorStatus.snapshot.hashrate_10s_hs.value,
+        unit: "H/s",
+        status: "measured",
+        source: "xmrig_http"
+      };
+    }
     var coreValEl = document.getElementById("core-hashrate-value");
     var coreUnitEl = document.getElementById("core-hashrate-unit");
     var coreModePill = document.getElementById("core-mode-pill");
@@ -954,6 +1158,25 @@ DASHBOARD_JS = """(function () {
 
     var sessStateEl = document.getElementById("core-session-state");
     var sessTimeEl = document.getElementById("core-session-time");
+    var hashesProcEl = document.getElementById("core-hashes-processed");
+    if (hashesProcEl) {
+      var snap = state.supervisorStatus && state.supervisorStatus.snapshot ? state.supervisorStatus.snapshot : null;
+      if (
+        state.telemetryMode === "real" &&
+        snap &&
+        snap.hashes_total &&
+        snap.hashes_total.quality === "VALID" &&
+        snap.hashes_total.value !== null
+      ) {
+        var hTotal = Number(snap.hashes_total.value).toLocaleString("en-US");
+        var shGood = (snap.shares_good && snap.shares_good.value !== null) ? snap.shares_good.value : null;
+        hashesProcEl.textContent = shGood !== null ? (hTotal + " (" + shGood + " shares)") : hTotal;
+        hashesProcEl.title = "Medido directamente desde XMRig HTTP API (/2/summary -> results.hashes_total)";
+      } else {
+        hashesProcEl.textContent = "N/D (Sin fuente)";
+        hashesProcEl.title = "No existe fuente verificable de conteo acumulado de hashes";
+      }
+    }
     var controlsCard = document.getElementById("sim-session-controls-card");
     var simIdLabel = document.getElementById("sim-session-id-label");
     var btnStart = document.getElementById("btn-sim-start");
@@ -1083,7 +1306,7 @@ DASHBOARD_JS = """(function () {
       return m.metric_name === "cpu_percent_total" && m.status !== "unavailable" && m.value !== null;
     });
     var hsPts = modeMeasurements.filter(function (m) {
-      return m.metric_name === "hashrate_hs" && m.status !== "unavailable" && m.value !== null;
+      return (m.metric_name === "hashrate_hs" || m.metric_name === "miner_hashrate_hs") && m.status !== "unavailable" && m.value !== null;
     });
 
     document.getElementById("chart-hardware-container").innerHTML = buildSvgLineChart(
@@ -1152,10 +1375,14 @@ DASHBOARD_JS = """(function () {
       latest[item.metric_name] = item;
     }
 
+    var gpuLabel = (state.hostHardware && state.hostHardware.gpu_model)
+      ? ("GPU (" + state.hostHardware.gpu_model + ")")
+      : "GPU / iGPU";
+
     document.getElementById("resources-percent-list").innerHTML =
       formatMetricRow("CPU Total", latest["cpu_percent_total"], true) +
       formatMetricRow("RAM Uso", latest["ram_usage_percent"], true) +
-      formatMetricRow("iGPU Radeon", latest["gpu_util_percent"], true);
+      formatMetricRow(gpuLabel, latest["gpu_util_percent"], true);
 
     document.getElementById("resources-mib-list").innerHTML =
       formatMetricRow("RAM Usada", latest["ram_used_mib"], false) +
@@ -1163,8 +1390,8 @@ DASHBOARD_JS = """(function () {
       formatMetricRow("CPU Frecuencia", latest["cpu_freq_mhz"], false);
 
     document.getElementById("resources-temp-list").innerHTML =
-      formatMetricRow("CPU Tctl/Tdie", latest["cpu_temp_c"], false) +
-      formatMetricRow("iGPU Temp", latest["gpu_temp_c"], false);
+      formatMetricRow("CPU Temp", latest["cpu_temp_c"], false) +
+      formatMetricRow("GPU Temp", latest["gpu_temp_c"], false);
 
     document.getElementById("resources-power-list").innerHTML =
       formatMetricRow("Potencia Paquete", latest["cpu_package_power_w"], false) +
@@ -1231,6 +1458,70 @@ DASHBOARD_JS = """(function () {
       if (payoutCfgEl && sup.payout) {
         payoutCfgEl.textContent = sup.payout.status_label || "Pendiente de definición por el usuario";
       }
+
+      var prog = (sup.payout && sup.payout.progress) ? sup.payout.progress : null;
+      var snap = sup.snapshot || null;
+      var minedBalEl = document.getElementById("crypto-mined-balance");
+      var minedThreshEl = document.getElementById("crypto-mined-threshold");
+      var minedBarEl = document.getElementById("crypto-mined-progress-bar");
+      var sharesSentEl = document.getElementById("crypto-shares-sent");
+      var poolNodeEl = document.getElementById("crypto-pool-node");
+      var storedRecEl = document.getElementById("crypto-stored-records");
+
+      if (prog && prog.pending_balance !== null && prog.status !== "unavailable") {
+        var coinStr = prog.coin || "USDT";
+        var netStr = prog.network ? (" (" + prog.network + ")") : "";
+        var pctVal = typeof prog.progress_pct === "number" ? prog.progress_pct : 0;
+        if (minedBalEl) {
+          minedBalEl.innerHTML = prog.pending_balance + " " + coinStr + netStr + " " + badgeHtml(prog.status || "measured", "EN POOL");
+        }
+        if (minedThreshEl) {
+          minedThreshEl.textContent = prog.pending_balance + " / " + (prog.payout_threshold || "1.5") + " " + coinStr + " (" + pctVal.toFixed(3) + "%)";
+        }
+        if (minedBarEl) {
+          minedBarEl.style.width = Math.max(1, Math.min(100, pctVal)) + "%";
+        }
+        if (!lastPool && state.telemetryMode === "real") {
+          document.getElementById("fin-pool-reported").innerHTML =
+            prog.pending_balance + " " + coinStr + netStr + " " + badgeHtml(prog.status || "measured", "MEDIDO");
+        }
+      } else {
+        if (minedBalEl) minedBalEl.innerHTML = "N/D " + badgeHtml("unavailable");
+        if (minedThreshEl) minedThreshEl.textContent = "Sin saldo reportado";
+        if (minedBarEl) minedBarEl.style.width = "0%";
+      }
+
+      if (snap && snap.shares_good && snap.shares_good.value !== null) {
+        var shG = snap.shares_good.value;
+        var shT = (snap.shares_total && snap.shares_total.value !== null) ? snap.shares_total.value : shG;
+        var rej = Math.max(0, shT - shG);
+        if (sharesSentEl) {
+          sharesSentEl.innerHTML = shG + " aceptados / " + shT + " enviados (Rechazados: " + rej + ") " + badgeHtml("measured", "OK");
+        }
+      } else if (sharesSentEl) {
+        sharesSentEl.innerHTML = "0 enviados " + badgeHtml("unavailable");
+      }
+
+      if (poolNodeEl) {
+        var algoName = (snap && snap.algorithm) ? snap.algorithm : "rx/0";
+        var poolUrl = (snap && snap.pool_url) ? snap.pool_url : "rx.unmineable.com:3333";
+        poolNodeEl.textContent = algoName + " → " + poolUrl;
+      }
+
+      if (storedRecEl) {
+        var hCnt = (snap && snap.hashes_total && snap.hashes_total.value !== null)
+          ? Number(snap.hashes_total.value).toLocaleString("en-US")
+          : "0";
+        storedRecEl.textContent = hCnt + " hashes · " + modeMeasurements.length + " muestras en SQLite";
+      }
+
+      if (sup.payout && sup.payout.milestones) {
+        renderMilestones(sup.payout.milestones);
+      }
+
+      if (sup.performance) {
+        renderPerformanceState(sup.performance);
+      }
     }
 
     renderPriceTicker();
@@ -1283,6 +1574,15 @@ DASHBOARD_JS = """(function () {
       state.telemetryMode = health.telemetry_mode || "simulated";
       state.boundHost = health.bound_host || "127.0.0.1";
       state.lastCollectionAtUtc = health.last_collection_at_utc;
+      state.hostHardware = health.host_hardware || state.hostHardware;
+      var hwSubtitle = document.getElementById("brand-hardware-subtitle");
+      if (hwSubtitle && state.hostHardware) {
+        var hw = state.hostHardware;
+        var gpuPart = hw.gpu_model ? (" + " + hw.gpu_model) : "";
+        hwSubtitle.textContent =
+          (hw.cpu_model || "CPU") + " (" + (hw.physical_cores || "?") + "C/" + (hw.logical_threads || "?") + "T · " +
+          (hw.total_ram_gib || "?") + " GiB RAM)" + gpuPart + " · Loopback " + state.boundHost;
+      }
       state.measurements = deduplicateMeasurements(results[1].items || []);
       state.rewards = results[2].items || [];
       state.payments = results[3].items || [];
@@ -1306,6 +1606,7 @@ DASHBOARD_JS = """(function () {
 
       pushLog("Sincronización completada (modo=" + state.telemetryMode + ", muestras=" + state.measurements.length + ")");
       renderDashboard();
+      refreshBiExportSummary(false);
     }).catch(function (err) {
       banner.className = "state-banner error";
       bannerText.textContent = "Error al consultar la API local: " + err.message;
@@ -1408,6 +1709,256 @@ DASHBOARD_JS = """(function () {
     }
   }
 
+  var perfCountdownInterval = null;
+
+  function renderPerformanceState(perf) {
+    if (!perf) return;
+    var activeLabelEl = document.getElementById("perf-active-label");
+    var resDetailEl = document.getElementById("perf-resources-detail");
+    var countdownBanner = document.getElementById("perf-countdown-banner");
+    var countdownText = document.getElementById("perf-countdown-text");
+    var fallbackSelect = document.getElementById("select-perf-fallback");
+
+    if (activeLabelEl) {
+      activeLabelEl.textContent = perf.label || perf.mode.toUpperCase();
+      if (perf.mode === "bajo") {
+        activeLabelEl.style.color = "var(--neon-green)";
+      } else if (perf.mode === "rapido") {
+        activeLabelEl.style.color = "#ffb800";
+      } else {
+        activeLabelEl.style.color = "var(--electric-blue)";
+      }
+    }
+    if (resDetailEl) {
+      var totalT = perf.logical_threads_total ? (" de " + perf.logical_threads_total) : "";
+      resDetailEl.textContent = (perf.threads_count || "?") + totalT + " hilos CPU · Prioridad " + (perf.priority || 2);
+    }
+    if (fallbackSelect && perf.profiles_summary) {
+      var ps = perf.profiles_summary;
+      var optNorm = fallbackSelect.querySelector('option[value="normal"]');
+      var optBajo = fallbackSelect.querySelector('option[value="bajo"]');
+      if (optNorm && ps.normal) {
+        optNorm.textContent = "Normal (Equilibrado — " + ps.normal.threads_count + " hilos)";
+      }
+      if (optBajo && ps.bajo) {
+        optBajo.textContent = "Bajo (Menor Desgaste — " + ps.bajo.threads_count + " hilos)";
+      }
+    }
+    if (fallbackSelect && perf.fallback_mode && (perf.fallback_mode === "normal" || perf.fallback_mode === "bajo")) {
+      fallbackSelect.value = perf.fallback_mode;
+    }
+
+    if (perf.mode === "rapido") {
+      if (countdownBanner) countdownBanner.classList.remove("hidden-view");
+      var rem = typeof perf.remaining_seconds === "number" ? Math.ceil(perf.remaining_seconds) : 10;
+      var fbName = (perf.fallback_mode === "bajo") ? "BAJO" : "NORMAL";
+      if (countdownText) {
+        countdownText.textContent = "Cambiando a " + fbName + " en " + rem + "s...";
+      }
+      if (!perfCountdownInterval) {
+        var secondsLeft = rem;
+        perfCountdownInterval = setInterval(function () {
+          secondsLeft -= 1;
+          var targetFb = (fallbackSelect && fallbackSelect.value === "bajo") ? "BAJO" : "NORMAL";
+          if (secondsLeft > 0) {
+            if (countdownText) {
+              countdownText.textContent = "Cambiando a " + targetFb + " en " + secondsLeft + "s...";
+            }
+          } else {
+            clearInterval(perfCountdownInterval);
+            perfCountdownInterval = null;
+            var autoTarget = (fallbackSelect && fallbackSelect.value === "bajo") ? "bajo" : "normal";
+            pushLog("Tiempo de Modo Rápido (10s) cumplido. Volviendo automáticamente a modo " + autoTarget.toUpperCase() + ".");
+            showToastAlert("🛡️ Protección de Hardware Activa", "10s de Modo Rápido cumplidos. Retornando a modo " + autoTarget.toUpperCase() + ".", "success");
+            triggerPerformanceMode(autoTarget);
+          }
+        }, 1000);
+      }
+    } else {
+      if (perfCountdownInterval) {
+        clearInterval(perfCountdownInterval);
+        perfCountdownInterval = null;
+      }
+      if (countdownBanner) countdownBanner.classList.add("hidden-view");
+    }
+  }
+
+  function triggerPerformanceMode(mode) {
+    var fallbackSelect = document.getElementById("select-perf-fallback");
+    var fallbackMode = fallbackSelect ? fallbackSelect.value : "normal";
+    if (perfCountdownInterval) {
+      clearInterval(perfCountdownInterval);
+      perfCountdownInterval = null;
+    }
+    pushLog("Cambiando modo de rendimiento a: " + mode.toUpperCase() + (mode === "rapido" ? (" (retorno automático en 10s a " + fallbackMode.toUpperCase() + ")") : ""));
+    fetch("/api/v1/performance", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ mode: mode, fallback_mode: fallbackMode })
+    }).then(function (r) {
+      if (!r.ok) throw new Error("HTTP " + r.status);
+      return r.json();
+    }).then(function (perf) {
+      if (mode === "rapido") {
+        showToastAlert("⚡ MODO RÁPIDO ACTIVADO (10s)", "12 hilos CPU asignados. Volverá a " + fallbackMode.toUpperCase() + " en 10s para proteger el procesador.", "warn");
+      } else if (mode === "bajo") {
+        showToastAlert("🟢 Modo Bajo (Eco) Activo", "4 hilos CPU asignados. Desgaste térmico reducido al mínimo.", "success");
+      } else {
+        showToastAlert("🔵 Modo Normal Equilibrado", "8 hilos CPU asignados (100% eficiencia de caché L3).", "info");
+      }
+      renderPerformanceState(perf);
+      refreshData();
+    }).catch(function (err) {
+      pushLog("Error al cambiar modo de rendimiento: " + err.message);
+      showToastAlert("Error de Rendimiento", err.message, "danger");
+    });
+  }
+
+  function renderMilestones(items) {
+    var box = document.getElementById("milestones-list-container");
+    var summaryEl = document.getElementById("milestones-export-summary");
+    if (!box) return;
+    if (!items || items.length === 0) {
+      box.innerHTML = '<div class="metric-row"><span>Metas:</span><span>Sin datos de metas</span></div>';
+      return;
+    }
+    var verifiedCount = 0;
+    var reachedPreCount = 0;
+    var totalPreCount = 0;
+    var rows = items.map(function (m) {
+      var isPre = m.stage_type === "pre_presentation";
+      if (isPre) totalPreCount += 1;
+      if (isPre && m.reached) reachedPreCount += 1;
+      if (isPre && m.export_verified) verifiedCount += 1;
+
+      var statusBadge = "";
+      if (m.export_verified) {
+        statusBadge = badgeHtml("measured", "EXPORTACIÓN VERIFICADA (" + m.wallet_short + ")");
+      } else if (m.reached) {
+        statusBadge = badgeHtml("simulated", "META ALCANZADA (LISTA PARA VERIFICAR)");
+      } else {
+        statusBadge = badgeHtml("estimated", m.progress_pct.toFixed(1) + "%");
+      }
+
+      var barColor = m.export_verified
+        ? "#00ff9d"
+        : (m.reached ? "#ffb800" : "#00d2ff");
+
+      return (
+        '<div style="padding: 0.35rem 0; border-bottom: 1px dashed rgba(139,155,180,0.16);">' +
+        '<div class="metric-row" style="border-bottom:none; padding: 0.1rem 0;">' +
+        '<div><strong>' + m.label + '</strong><small class="metric-source">' +
+        (isPre ? ("Ref: " + m.tx_reference) : "Transferencia automática on-chain BSC") +
+        "</small></div>" +
+        '<span class="metric-val">' + m.current_amount + " / " + m.target_amount + " " + m.coin + " " + statusBadge + "</span>" +
+        "</div>" +
+        '<div class="bar-track"><div class="bar-fill" style="width:' + Math.max(1, Math.min(100, m.progress_pct)) + '%; background:' + barColor + ';"></div></div>' +
+        "</div>"
+      );
+    });
+    box.innerHTML = rows.join("");
+    if (summaryEl) {
+      summaryEl.textContent =
+        "Metas previas alcanzadas: " + reachedPreCount + "/" + totalPreCount + " · Exportaciones verificadas a cartera Binance: " + verifiedCount + "/" + totalPreCount;
+    }
+  }
+
+  function triggerVerifyMilestones() {
+    pushLog("Ejecutando verificación de exportación de metas alcanzadas hacia cartera Binance...");
+    fetch("/api/v1/milestones/verify", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: "{}"
+    }).then(function (r) {
+      if (!r.ok) throw new Error("HTTP " + r.status);
+      return r.json();
+    }).then(function (res) {
+      var exported = res.newly_exported_milestones || [];
+      if (exported.length > 0) {
+        pushLog("Exportación verificada y conciliada para: " + exported.join(", ").toUpperCase());
+        showToastAlert("📤 Exportación a Binance Verificada", "Se conciliaron las metas: " + exported.join(", ").toUpperCase() + " en SQLite DW.", "success");
+      } else {
+        pushLog("Todas las metas alcanzadas hasta el momento ya tienen su exportación verificada.");
+        showToastAlert("✅ Metas al Día", "Todas las metas alcanzadas hasta el momento ya tienen su exportación verificada.", "success");
+      }
+      refreshData();
+    }).catch(function (err) {
+      pushLog("Error al verificar metas de exportación: " + err.message);
+      showToastAlert("Error en Verificación de Metas", err.message, "danger");
+    });
+  }
+
+  function refreshBiExportSummary(logAction) {
+    if (logAction) {
+      pushLog("Actualizando archivo Excel (.xlsx) y scripts Power BI en data/exports/mineops_dw_reporte_bi.xlsx...");
+    }
+    fetch("/api/v1/exports/bi-summary").then(function (r) {
+      if (!r.ok) throw new Error("HTTP " + r.status);
+      return r.json();
+    }).then(function (bi) {
+      var s = bi.summary || {};
+      var totalEl = document.getElementById("bi-total-mined");
+      var timeRateEl = document.getElementById("bi-active-time-rate");
+      var avgEl = document.getElementById("bi-active-averages");
+      var sheetsEl = document.getElementById("bi-sheets-info");
+      var pathEl = document.getElementById("bi-excel-path");
+      var pqEl = document.getElementById("bi-powerquery-box");
+      var daxEl = document.getElementById("bi-dax-box");
+
+      if (totalEl) {
+        totalEl.innerHTML =
+          s.total_mined_usdt + " " + (s.coin || "USDT") + " (" + (s.network || "BSC") + ") " +
+          badgeHtml("measured", (s.shares_accepted || 0) + " shares");
+      }
+      if (timeRateEl) {
+        timeRateEl.textContent =
+          (s.active_minutes || 0) + " min activos · Tasa: " + (s.usdt_per_hour || 0) + " " + (s.coin || "USDT") + "/hora";
+      }
+      if (avgEl) {
+        avgEl.textContent =
+          (s.avg_hashrate_hs || 0) + " H/s (Pico: " + (s.max_hashrate_hs || 0) + " H/s) · CPU: " +
+          (s.avg_cpu_pct || 0) + "% · RAM: " + (s.avg_ram_pct || 0) + "%";
+      }
+      if (sheetsEl && bi.sheets) {
+        sheetsEl.textContent =
+          bi.sheets.length + " hojas DW (" + (s.telemetry_rows_exported || 0) + " muestras activas exportadas)";
+      }
+      if (pathEl && bi.excel_file_path) {
+        pathEl.textContent = bi.excel_file_path;
+      }
+      if (pqEl && bi.power_query_m) {
+        pqEl.value = bi.power_query_m;
+      }
+      if (daxEl && bi.dax_measures) {
+        daxEl.value = bi.dax_measures;
+      }
+      if (logAction) {
+        pushLog("Reporte Excel (.xlsx) actualizado en disco para Power BI Desktop (" + (bi.excel_size_bytes || 0) + " bytes).");
+        showToastAlert("📊 Archivo Power BI Sincronizado", "Excel (.xlsx) de 5 hojas actualizado en data/exports/mineops_dw_reporte_bi.xlsx", "success");
+      }
+    }).catch(function (err) {
+      if (logAction) {
+        pushLog("Error al generar resumen BI: " + err.message);
+        showToastAlert("Error al Exportar BI", err.message, "danger");
+      }
+    });
+  }
+
+  var btnToggleSound = document.getElementById("btn-toggle-sound");
+  if (btnToggleSound) {
+    btnToggleSound.addEventListener("click", function () {
+      state.soundAlertsEnabled = !state.soundAlertsEnabled;
+      btnToggleSound.textContent = state.soundAlertsEnabled ? "🔔 Alertas: ON" : "🔕 Alertas: OFF";
+      btnToggleSound.style.borderColor = state.soundAlertsEnabled ? "#00ff9d" : "#8b9bb4";
+      btnToggleSound.style.color = state.soundAlertsEnabled ? "#00ff9d" : "#8b9bb4";
+      showToastAlert(
+        state.soundAlertsEnabled ? "🔔 Alertas Sonoras Activadas" : "🔕 Alertas Silenciadas",
+        state.soundAlertsEnabled ? "El sistema emitirá avisos visuales y acústicos." : "Solo se mostrarán notificaciones visuales.",
+        "info"
+      );
+    });
+  }
+
   document.getElementById("filter-status").addEventListener("change", function (e) {
     state.statusFilter = e.target.value;
     renderDashboard();
@@ -1420,6 +1971,26 @@ DASHBOARD_JS = """(function () {
   var btnCollect = document.getElementById("btn-collect");
   if (btnCollect) {
     btnCollect.addEventListener("click", triggerCollectNow);
+  }
+  var btnPerfBajo = document.getElementById("btn-perf-bajo");
+  if (btnPerfBajo) {
+    btnPerfBajo.addEventListener("click", function () { triggerPerformanceMode("bajo"); });
+  }
+  var btnPerfNormal = document.getElementById("btn-perf-normal");
+  if (btnPerfNormal) {
+    btnPerfNormal.addEventListener("click", function () { triggerPerformanceMode("normal"); });
+  }
+  var btnPerfRapido = document.getElementById("btn-perf-rapido");
+  if (btnPerfRapido) {
+    btnPerfRapido.addEventListener("click", function () { triggerPerformanceMode("rapido"); });
+  }
+  var btnVerifyMilestones = document.getElementById("btn-verify-milestones");
+  if (btnVerifyMilestones) {
+    btnVerifyMilestones.addEventListener("click", triggerVerifyMilestones);
+  }
+  var btnRefreshBiExport = document.getElementById("btn-refresh-bi-export");
+  if (btnRefreshBiExport) {
+    btnRefreshBiExport.addEventListener("click", function () { refreshBiExportSummary(true); });
   }
   var btnSimStart = document.getElementById("btn-sim-start");
   if (btnSimStart) {

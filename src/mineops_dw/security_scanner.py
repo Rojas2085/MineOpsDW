@@ -27,6 +27,10 @@ _PRIVATE_KEY_HEADER = re.compile(r"-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-
 _POPULATED_ENV_SECRET = re.compile(
     r"(?m)^\s*(BINANCE_READ_ONLY_API_KEY|BINANCE_READ_ONLY_API_SECRET)\s*=\s*([^\s#]+)"
 )
+_POPULATED_PAYOUT_ADDRESS = re.compile(
+    r"(?m)^\s*PAYOUT_ADDRESS\s*=\s*([^\s#]+)"
+)
+_EVM_WALLET_ADDRESS = re.compile(r"\b0x[a-fA-F0-9]{40}\b")
 
 
 @dataclass(frozen=True)
@@ -76,5 +80,27 @@ def scan_workspace_for_secrets(root_dir: Path | str) -> list[SecretFinding]:
                             line_number=idx,
                         )
                     )
+            if path.name != ".env":
+                if path.name.startswith(".env") or path.suffix == ".env":
+                    payout_match = _POPULATED_PAYOUT_ADDRESS.match(line)
+                    if payout_match:
+                        val = payout_match.group(1).strip().strip("'\"")
+                        if val and val not in {"", "TU_DIRECCION_PUBLICA", "YOUR_ADDRESS_HERE"}:
+                            findings.append(
+                                SecretFinding(
+                                    file_path=path,
+                                    rule_name="populated_payout_address",
+                                    line_number=idx,
+                                )
+                            )
+                if "security_scanner" not in path.name:
+                    if _EVM_WALLET_ADDRESS.search(line) and "0x0000000000000000000000000000000000000000" not in line:
+                        findings.append(
+                            SecretFinding(
+                                file_path=path,
+                                rule_name="evm_wallet_address",
+                                line_number=idx,
+                            )
+                        )
 
     return findings

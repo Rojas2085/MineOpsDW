@@ -202,6 +202,29 @@ def test_binance_public_market_client_24h_ticker_and_error_degradation() -> None
     assert snap.price == "84500.25"
     assert snap.status == "measured"
 
+    def neg_pct_handler(_: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json={
+                "symbol": "BTCUSDT",
+                "lastPrice": "76880.01",
+                "weightedAvgPrice": "77932.65",
+                "priceChangePercent": "-1.145",
+            },
+        )
+
+    with httpx.Client(transport=httpx.MockTransport(neg_pct_handler)) as client:
+        market_neg = BinancePublicMarketClient(http_client=client)
+        ticker_neg, snap_neg = market_neg.fetch_ticker_24h(
+            asset="BTC",
+            quote_asset="USDT",
+            observed_at_utc="2026-11-02T13:05:00Z",
+        )
+
+    assert ticker_neg.status == "measured"
+    assert ticker_neg.price_change_pct == "-1.145"
+    assert snap_neg.price == "76880.01"
+
     def err_handler(_: httpx.Request) -> httpx.Response:
         return httpx.Response(503, text="Service Unavailable")
 

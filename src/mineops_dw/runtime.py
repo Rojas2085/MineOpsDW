@@ -14,9 +14,11 @@ from mineops_dw.adapters.binance import BinanceDepositReadOnlyAdapter
 from mineops_dw.adapters.mining import SimulatedMinerPoolAdapter
 from mineops_dw.adapters.prices import MarketPriceAdapter
 from mineops_dw.adapters.sensors import HostResourceSensorAdapter, LhmSensorAdapter
+from mineops_dw.adapters.xmrig import XMRigApiAdapter
 from mineops_dw.api.server import LocalHttpServer, MineOpsApiService
 from mineops_dw.collector.service import PeriodicCollectorScheduler, TelemetryCollectorService
 from mineops_dw.config import AppSettings, load_settings
+from mineops_dw.domain.hardware_profile import detect_host_hardware
 from mineops_dw.domain.models import PaymentEvent, PriceSnapshot, normalize_utc_timestamp
 from mineops_dw.logging_config import configure_logging
 from mineops_dw.reporting.generator import PeriodicReportGenerator, align_window_utc
@@ -99,6 +101,12 @@ def bootstrap_demo_simulation(
         )
     )
 
+    # Also fetch live BTC/USD and BTC/BOB market prices if internet is reachable
+    price_adapter = MarketPriceAdapter(usd_to_bob_rate=Decimal("6.96"))
+    for snap in price_adapter.fetch_prices(include_bob=True):
+        if snap.status != "unavailable":
+            repository.insert_price_snapshot(snap)
+
     # Run two immediate host telemetry collection cycles (so Win32 CPU delta and RAM are measured)
     collector.collect_once(active_session_id=session.id)
     time.sleep(0.15)
@@ -163,13 +171,23 @@ def run_local_service(settings: AppSettings | None = None) -> None:
     db = SQLiteDatabase(cfg.database_path)
     migrations = db.apply_migrations()
     repo = MineOpsRepository(db)
+    hw = detect_host_hardware()
+    effective_tdp = cfg.cpu_tdp_watts if cfg.cpu_tdp_watts is not None else hw.estimated_tdp_watts
 
     host_adapter = HostResourceSensorAdapter()
     lhm_adapter = LhmSensorAdapter()
+    xmrig_connector = XMRigApiAdapter(
+        base_url=cfg.xmrig_api_url,
+        access_token=cfg.xmrig_access_token,
+        timeout_seconds=1.5,
+    )
     collector = TelemetryCollectorService(
         repository=repo,
         adapters=[host_adapter, lhm_adapter],
         settings=cfg,
+        enable_tdp_fallback=True,
+        cpu_tdp_watts=effective_tdp,
+        miner_connector=xmrig_connector,
     )
 
     if cfg.telemetry_mode == "real":
@@ -188,6 +206,8 @@ def run_local_service(settings: AppSettings | None = None) -> None:
         settings=cfg,
         collector=collector,
         simulator=collector.simulator,
+        miner_connector=xmrig_connector,
+        host_hardware=hw,
     )
     server = LocalHttpServer(
         api_service=api_service,
@@ -207,10 +227,15 @@ def run_local_service(settings: AppSettings | None = None) -> None:
     scheduler.start()
     server.start()
     logger.info(
-        "MineOps DW started on %s (mode=%s, session=%s, migrations=%s)",
+        "MineOps DW started on %s (mode=%s, session=%s, hw=%s %sC/%sT %.1fGiB, tdp=%.0fW, migrations=%s)",
         server.base_url,
         cfg.telemetry_mode,
         session_id,
+        hw.cpu_model,
+        hw.physical_cores,
+        hw.logical_threads,
+        hw.total_ram_gib,
+        effective_tdp,
         migrations,
     )
 

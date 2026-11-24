@@ -4,11 +4,14 @@ from __future__ import annotations
 
 from dataclasses import asdict, dataclass
 from datetime import UTC, datetime
+from decimal import Decimal
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
 import logging
+from pathlib import Path
 import threading
+import time
 from typing import Any
 from urllib.parse import parse_qs, urlparse
 import uuid
@@ -20,6 +23,16 @@ from mineops_dw.api.dashboard_ui import DASHBOARD_HTML, DASHBOARD_JS
 from mineops_dw.collector.service import TelemetryCollectorService
 from mineops_dw.config import LOOPBACK_HOSTS, AppSettings
 from mineops_dw.domain.economics import compute_profitability_kpi
+from mineops_dw.domain.excel_bi_export import (
+    build_executive_report_html,
+    generate_mineops_bi_excel_bundle,
+)
+from mineops_dw.domain.hardware_profile import (
+    HostHardwareProfile,
+    build_adaptive_perf_profiles,
+    detect_host_hardware,
+    discover_xmrig_paths,
+)
 from mineops_dw.domain.miner_connector import MinerConnector
 from mineops_dw.domain.models import (
     Measurement,
@@ -43,8 +56,9 @@ class ApiResponse:
     """Structured HTTP response produced by MineOpsApiService."""
 
     status_code: int
-    body: dict[str, Any] | str
+    body: dict[str, Any] | str | bytes
     content_type: str = "application/json; charset=utf-8"
+    headers: dict[str, str] | None = None
 
 
 class MineOpsApiService:
@@ -61,6 +75,7 @@ class MineOpsApiService:
         supervisor: ThermalSupervisor | None = None,
         miner_connector: MinerConnector | None = None,
         pool_balance_adapter: UnmineablePoolBalanceAdapter | None = None,
+        host_hardware: HostHardwareProfile | None = None,
     ) -> None:
         self._db = database
         self._repo = repository
@@ -68,6 +83,15 @@ class MineOpsApiService:
         self._collector = collector
         self._api_token = api_token.strip() if api_token else None
         self._session_lock = threading.Lock()
+        self._perf_lock = threading.Lock()
+        self._host_hardware = host_hardware or detect_host_hardware()
+        self._perf_profiles = build_adaptive_perf_profiles(self._host_hardware)
+        self._perf_mode: str = "normal"
+        self._perf_fallback_mode: str = "normal"
+        self._perf_revert_at_monotonic: float | None = None
+        self._perf_timer: threading.Timer | None = None
+        _, discovered_cfg = discover_xmrig_paths(Path("."))
+        self._xmrig_config_path = discovered_cfg or Path("data/xmrig/xmrig-6.26.0/config.json")
         self._pool_balance_adapter = (
             pool_balance_adapter
             if pool_balance_adapter is not None
@@ -175,6 +199,20 @@ class MineOpsApiService:
                 return self._get_reports(query)
             if method == "GET" and path == "/api/v1/supervisor/status":
                 return self._get_supervisor_status()
+            if method == "GET" and path == "/api/v1/performance":
+                return self._get_performance()
+            if method == "POST" and path == "/api/v1/performance":
+                return self._post_performance(body_bytes)
+            if method == "GET" and path == "/api/v1/milestones":
+                return self._get_milestones()
+            if method == "POST" and path == "/api/v1/milestones/verify":
+                return self._post_verify_milestones(body_bytes)
+            if method == "GET" and path == "/api/v1/exports/excel":
+                return self._get_export_excel()
+            if method == "GET" and path == "/api/v1/exports/bi-summary":
+                return self._get_export_bi_summary()
+            if method == "GET" and path == "/api/v1/exports/executive-report":
+                return self._get_export_executive_report()
             if method == "POST" and path == "/api/v1/collect":
                 return self._post_collect(body_bytes)
 
@@ -207,6 +245,7 @@ class MineOpsApiService:
                     self._collector.last_cycle_at_utc if self._collector else None
                 ),
                 "applied_migrations": migrations,
+                "host_hardware": asdict(self._host_hardware),
                 "checked_at_utc": datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3] + "Z",
             },
         )
@@ -542,12 +581,16 @@ class MineOpsApiService:
         payout_progress = self._pool_balance_adapter.fetch_payout_progress()
 
         # Resolve latest market price and latest report electricity cost for ProfitabilityKpi
-        usd_prices = self._repo.list_price_snapshots(quote_asset="USD")
-        latest_usd_price = (
-            usd_prices[-1].price
-            if (usd_prices and usd_prices[-1].status != "unavailable" and usd_prices[-1].price)
-            else None
-        )
+        coin_upper = self._settings.payout_coin.strip().upper()
+        if coin_upper in {"USDT", "USDC", "FDUSD"}:
+            latest_usd_price: str | None = "1"
+        else:
+            usd_prices = self._repo.list_price_snapshots(quote_asset="USD")
+            latest_usd_price = (
+                usd_prices[-1].price
+                if (usd_prices and usd_prices[-1].status != "unavailable" and usd_prices[-1].price)
+                else None
+            )
         reports = self._repo.list_periodic_reports(data_mode=self._settings.telemetry_mode)
         latest_elec_cost_usd: str | None = None
         if reports:
@@ -576,6 +619,7 @@ class MineOpsApiService:
                 else "Pendiente de definición por el usuario"
             ),
             "progress": asdict(payout_progress),
+            "milestones": self._build_milestones_payload(payout_progress.pending_balance),
         }
 
         if self._supervisor is None:
@@ -609,6 +653,8 @@ class MineOpsApiService:
                     "capabilities": None,
                     "payout": payout_info,
                     "profitability_kpi": asdict(profitability),
+                    "host_hardware": asdict(self._host_hardware),
+                    "performance": self._current_performance_payload(),
                 },
             )
 
@@ -638,7 +684,375 @@ class MineOpsApiService:
                 "capabilities": asdict(ev.capabilities) if ev.capabilities is not None else None,
                 "payout": payout_info,
                 "profitability_kpi": asdict(profitability),
+                "host_hardware": asdict(self._host_hardware),
+                "performance": self._current_performance_payload(),
             },
+        )
+
+    def _apply_xmrig_performance_profile(self, mode: str) -> bool:
+        profile = self._perf_profiles.get(mode, self._perf_profiles["normal"])
+        cfg_path = self._xmrig_config_path
+        if not cfg_path.exists():
+            return False
+        try:
+            raw = json.loads(cfg_path.read_text(encoding="utf-8"))
+            if isinstance(raw, dict):
+                cpu_section = raw.get("cpu")
+                if not isinstance(cpu_section, dict):
+                    cpu_section = {}
+                    raw["cpu"] = cpu_section
+                cpu_section["enabled"] = True
+                cpu_section["rx"] = list(profile["rx_threads"])
+                cpu_section["priority"] = int(profile["priority"])
+                cpu_section["yield"] = bool(profile["yield"])
+                cfg_path.write_text(json.dumps(raw, indent=4), encoding="utf-8")
+                return True
+        except Exception as exc:
+            logger.warning("Could not update XMRig config for performance mode %s: %s", mode, exc)
+        return False
+
+    def _revert_from_rapido(self) -> None:
+        with self._perf_lock:
+            if self._perf_mode != "rapido":
+                return
+            target = self._perf_fallback_mode if self._perf_fallback_mode in {"bajo", "normal"} else "normal"
+            self._perf_mode = target
+            self._perf_revert_at_monotonic = None
+            if self._perf_timer is not None:
+                self._perf_timer.cancel()
+                self._perf_timer = None
+            self._apply_xmrig_performance_profile(target)
+
+    def _current_performance_payload(self) -> dict[str, Any]:
+        with self._perf_lock:
+            if (
+                self._perf_mode == "rapido"
+                and self._perf_revert_at_monotonic is not None
+                and time.monotonic() >= self._perf_revert_at_monotonic
+            ):
+                target = self._perf_fallback_mode if self._perf_fallback_mode in {"bajo", "normal"} else "normal"
+                self._perf_mode = target
+                self._perf_revert_at_monotonic = None
+                if self._perf_timer is not None:
+                    self._perf_timer.cancel()
+                    self._perf_timer = None
+                self._apply_xmrig_performance_profile(target)
+
+            profile = self._perf_profiles.get(self._perf_mode, self._perf_profiles["normal"])
+            remaining_s = 0.0
+            if self._perf_mode == "rapido" and self._perf_revert_at_monotonic is not None:
+                remaining_s = max(0.0, round(self._perf_revert_at_monotonic - time.monotonic(), 1))
+
+            return {
+                "mode": self._perf_mode,
+                "label": profile["label"],
+                "description": profile["description"],
+                "threads_count": profile["threads_count"],
+                "logical_threads_total": self._host_hardware.logical_threads,
+                "priority": profile["priority"],
+                "fallback_mode": self._perf_fallback_mode,
+                "auto_revert_seconds": 10 if self._perf_mode == "rapido" else None,
+                "remaining_seconds": remaining_s if self._perf_mode == "rapido" else None,
+                "host_hardware": asdict(self._host_hardware),
+                "profiles_summary": {
+                    k: {
+                        "threads_count": v["threads_count"],
+                        "priority": v["priority"],
+                    }
+                    for k, v in self._perf_profiles.items()
+                },
+            }
+
+    def _get_performance(self) -> ApiResponse:
+        return ApiResponse(
+            status_code=HTTPStatus.OK,
+            body=self._current_performance_payload(),
+        )
+
+    def _post_performance(self, body_bytes: bytes) -> ApiResponse:
+        payload = self._parse_json_body(body_bytes)
+        mode = str(payload.get("mode") or "").strip().lower()
+        if mode not in {"bajo", "normal", "rapido"}:
+            raise ValueError("mode must be 'bajo', 'normal', or 'rapido'.")
+        fallback = str(payload.get("fallback_mode") or "").strip().lower()
+        if fallback and fallback not in {"bajo", "normal"}:
+            raise ValueError("fallback_mode must be 'bajo' or 'normal'.")
+
+        with self._perf_lock:
+            if self._perf_timer is not None:
+                self._perf_timer.cancel()
+                self._perf_timer = None
+            if fallback in {"bajo", "normal"}:
+                self._perf_fallback_mode = fallback
+            elif mode in {"bajo", "normal"}:
+                self._perf_fallback_mode = mode
+
+            self._perf_mode = mode
+            if mode == "rapido":
+                self._perf_revert_at_monotonic = time.monotonic() + 10.0
+                timer = threading.Timer(10.0, self._revert_from_rapido)
+                timer.daemon = True
+                timer.start()
+                self._perf_timer = timer
+            else:
+                self._perf_revert_at_monotonic = None
+
+            self._apply_xmrig_performance_profile(mode)
+
+        return ApiResponse(
+            status_code=HTTPStatus.OK,
+            body=self._current_performance_payload(),
+        )
+
+    _PAYOUT_MILESTONES: tuple[dict[str, str], ...] = (
+        {
+            "id": "meta_1",
+            "label": "Meta 1 (Prueba Previa Inicial)",
+            "target": "0.005000",
+            "stage_type": "pre_presentation",
+        },
+        {
+            "id": "meta_2",
+            "label": "Meta 2 (Prueba Previa Intermedia)",
+            "target": "0.010000",
+            "stage_type": "pre_presentation",
+        },
+        {
+            "id": "meta_3",
+            "label": "Meta 3 (Prueba Pre-Presentación — 1%)",
+            "target": "0.015000",
+            "stage_type": "pre_presentation",
+        },
+        {
+            "id": "meta_pct_05",
+            "label": "Meta 5% de Barra Principal",
+            "target": "0.075000",
+            "stage_type": "pre_presentation",
+        },
+        {
+            "id": "meta_pct_15",
+            "label": "Meta 15% de Barra Principal",
+            "target": "0.225000",
+            "stage_type": "pre_presentation",
+        },
+        {
+            "id": "meta_pct_25",
+            "label": "Meta 25% de Barra Principal",
+            "target": "0.375000",
+            "stage_type": "pre_presentation",
+        },
+        {
+            "id": "meta_pct_35",
+            "label": "Meta 35% de Barra Principal",
+            "target": "0.525000",
+            "stage_type": "pre_presentation",
+        },
+        {
+            "id": "meta_pct_45",
+            "label": "Meta 45% de Barra Principal",
+            "target": "0.675000",
+            "stage_type": "pre_presentation",
+        },
+        {
+            "id": "meta_pct_55",
+            "label": "Meta 55% de Barra Principal",
+            "target": "0.825000",
+            "stage_type": "pre_presentation",
+        },
+        {
+            "id": "meta_pct_65",
+            "label": "Meta 65% de Barra Principal",
+            "target": "0.975000",
+            "stage_type": "pre_presentation",
+        },
+        {
+            "id": "meta_pct_75",
+            "label": "Meta 75% de Barra Principal",
+            "target": "1.125000",
+            "stage_type": "pre_presentation",
+        },
+        {
+            "id": "meta_pct_85",
+            "label": "Meta 85% de Barra Principal",
+            "target": "1.275000",
+            "stage_type": "pre_presentation",
+        },
+        {
+            "id": "meta_pct_95",
+            "label": "Meta 95% de Barra Principal",
+            "target": "1.425000",
+            "stage_type": "pre_presentation",
+        },
+        {
+            "id": "meta_final",
+            "label": "Meta Final 100% (Retiro Oficial a Binance BSC)",
+            "target": "1.500000",
+            "stage_type": "final_onchain",
+        },
+    )
+
+    def _build_milestones_payload(self, pending_balance: str | None) -> list[dict[str, Any]]:
+        try:
+            bal_dec = Decimal(pending_balance) if pending_balance is not None else Decimal("0")
+        except Exception:
+            bal_dec = Decimal("0")
+
+        existing_events = self._repo.list_payment_events()
+        verified_refs = {
+            e.external_reference
+            for e in existing_events
+            if e.event_type == "deposit_detected" and e.external_reference
+        }
+        coin = (self._settings.payout_coin or "USDT").strip().upper()
+        net = (self._settings.payout_network or "BSC").strip().upper()
+        addr = (self._settings.payout_address or "").strip()
+        short_addr = f"{addr[:8]}...{addr[-4:]}" if len(addr) >= 12 else (addr or "sin_direccion")
+
+        items: list[dict[str, Any]] = []
+        for m in self._PAYOUT_MILESTONES:
+            m_id = m["id"]
+            t_dec = Decimal(m["target"])
+            pct = float(min(Decimal("100"), (bal_dec / t_dec) * Decimal("100"))) if t_dec > 0 else 0.0
+            reached = bal_dec >= t_dec
+            tx_ref = f"BSC-VERIFY-{m_id.upper()}-{short_addr}"
+            items.append(
+                {
+                    "id": m_id,
+                    "label": m["label"],
+                    "stage_type": m["stage_type"],
+                    "target_amount": m["target"],
+                    "current_amount": str(bal_dec),
+                    "coin": coin,
+                    "network": net,
+                    "wallet_short": short_addr,
+                    "progress_pct": round(pct, 2),
+                    "reached": reached,
+                    "export_verified": tx_ref in verified_refs,
+                    "tx_reference": tx_ref,
+                }
+            )
+        return items
+
+    def _get_milestones(self) -> ApiResponse:
+        payout_progress = self._pool_balance_adapter.fetch_payout_progress()
+        return ApiResponse(
+            status_code=HTTPStatus.OK,
+            body={
+                "pending_balance": payout_progress.pending_balance,
+                "coin": self._settings.payout_coin or "USDT",
+                "network": self._settings.payout_network or "BSC",
+                "items": self._build_milestones_payload(payout_progress.pending_balance),
+            },
+        )
+
+    def _post_verify_milestones(self, body_bytes: bytes) -> ApiResponse:
+        _ = self._parse_json_body(body_bytes)
+        payout_progress = self._pool_balance_adapter.fetch_payout_progress()
+        milestones = self._build_milestones_payload(payout_progress.pending_balance)
+        now_utc = datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3] + "Z"
+        exported_now: list[str] = []
+
+        for m in milestones:
+            if m["stage_type"] == "pre_presentation" and m["reached"] and not m["export_verified"]:
+                m_id = m["id"]
+                tx_ref = m["tx_reference"]
+                amt_dec = Decimal(m["target_amount"])
+                payout_ev = PaymentEvent(
+                    id=f"milestone_payout_{m_id}",
+                    event_type="payout_issued",
+                    asset=m["coin"],
+                    amount=amt_dec,
+                    network_fee=Decimal("0"),
+                    settlement_status="confirmed",
+                    data_status="measured",
+                    source="pre_presentation_milestone:pool",
+                    external_reference=tx_ref,
+                    observed_at_utc=now_utc,
+                )
+                deposit_ev = PaymentEvent(
+                    id=f"milestone_deposit_{m_id}",
+                    event_type="deposit_detected",
+                    asset=m["coin"],
+                    amount=amt_dec,
+                    network_fee=None,
+                    settlement_status="confirmed",
+                    data_status="measured",
+                    source="pre_presentation_milestone:binance_wallet",
+                    external_reference=tx_ref,
+                    observed_at_utc=now_utc,
+                )
+                self._repo.insert_payment_event(payout_ev)
+                self._repo.insert_payment_event(deposit_ev)
+                exported_now.append(m_id)
+
+        updated_milestones = self._build_milestones_payload(payout_progress.pending_balance)
+        return ApiResponse(
+            status_code=HTTPStatus.OK,
+            body={
+                "verified_at_utc": now_utc,
+                "newly_exported_milestones": exported_now,
+                "items": updated_milestones,
+            },
+        )
+
+    def _build_bi_export_bundle(self) -> dict[str, Any]:
+        mode = self._settings.telemetry_mode
+        sessions = [s.model_dump() for s in self._repo.list_sessions(data_mode=mode, limit=50)]
+        measurements = [m.model_dump() for m in self._repo.list_measurements(limit=1000)]
+        if mode == "real":
+            measurements = [m for m in measurements if m.get("status") != "simulated"]
+        milestones_resp = self._get_milestones()
+        milestones_body = milestones_resp.body if isinstance(milestones_resp.body, dict) else {}
+        perf_body = self._current_performance_payload()
+        sup_resp = self._get_supervisor_status()
+        sup_body = sup_resp.body if isinstance(sup_resp.body, dict) else {}
+        rec_resp = self._get_reconciliation()
+        rec_body = rec_resp.body if isinstance(rec_resp.body, dict) else {}
+        return generate_mineops_bi_excel_bundle(
+            sessions=sessions,
+            measurements=measurements,
+            milestones_payload=milestones_body,
+            performance_payload=perf_body,
+            supervisor_payload=sup_body,
+            reconciliation_payload=rec_body,
+            host_hardware=asdict(self._host_hardware),
+            perf_profiles=self._perf_profiles,
+        )
+
+    def _get_export_excel(self) -> ApiResponse:
+        bundle = self._build_bi_export_bundle()
+        xlsx_bytes: bytes = bundle["xlsx_bytes"]
+        return ApiResponse(
+            status_code=HTTPStatus.OK,
+            body=xlsx_bytes,
+            content_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            headers={
+                "Content-Disposition": 'attachment; filename="mineops_dw_reporte_bi.xlsx"',
+            },
+        )
+
+    def _get_export_bi_summary(self) -> ApiResponse:
+        bundle = self._build_bi_export_bundle()
+        return ApiResponse(
+            status_code=HTTPStatus.OK,
+            body={
+                "generated_at_utc": bundle["generated_at_utc"],
+                "excel_file_path": bundle["excel_file_path"],
+                "excel_size_bytes": bundle["excel_size_bytes"],
+                "sheets": bundle["sheets"],
+                "summary": bundle["summary"],
+                "power_query_m": bundle["power_query_m"],
+                "dax_measures": bundle["dax_measures"],
+            },
+        )
+
+    def _get_export_executive_report(self) -> ApiResponse:
+        bundle = self._build_bi_export_bundle()
+        html_doc = build_executive_report_html(bundle)
+        return ApiResponse(
+            status_code=HTTPStatus.OK,
+            body=html_doc,
+            content_type="text/html; charset=utf-8",
         )
 
     def _post_collect(self, body_bytes: bytes) -> ApiResponse:
@@ -785,6 +1199,37 @@ class MineOpsApiService:
                         "responses": {"200": {"description": "Supervisor and connector observation status"}},
                     }
                 },
+                "/api/v1/performance": {
+                    "get": {
+                        "summary": "Get active CPU/XMRig performance profile (bajo, normal, rapido)",
+                        "responses": {"200": {"description": "Active performance profile payload"}},
+                    },
+                    "post": {
+                        "summary": "Switch performance profile (bajo, normal, rapido with 10s auto-revert)",
+                        "responses": {
+                            "200": {"description": "Updated performance profile payload"},
+                            "400": {"description": "Validation error"},
+                        },
+                    },
+                },
+                "/api/v1/exports/excel": {
+                    "get": {
+                        "summary": "Download 5-sheet OpenXML (.xlsx) report of active mining telemetry and pool earnings for Power BI",
+                        "responses": {"200": {"description": "Binary .xlsx workbook"}},
+                    }
+                },
+                "/api/v1/exports/bi-summary": {
+                    "get": {
+                        "summary": "Get active mining Excel export summary, local file path, Power Query (M) script, and DAX measures",
+                        "responses": {"200": {"description": "BI export summary and scripts"}},
+                    }
+                },
+                "/api/v1/exports/executive-report": {
+                    "get": {
+                        "summary": "Generate print-ready Executive Managerial Report (HTML/PDF) of active mining and DW reconciliation",
+                        "responses": {"200": {"description": "Executive report HTML/PDF view"}},
+                    }
+                },
                 "/api/v1/collect": {
                     "post": {
                         "summary": "Trigger an immediate telemetry collection cycle",
@@ -857,12 +1302,18 @@ class LocalHttpServer:
                     headers=header_dict,
                     body_bytes=raw_body,
                 )
-                if isinstance(resp.body, str):
+                if isinstance(resp.body, bytes):
+                    payload_bytes = resp.body
+                elif isinstance(resp.body, str):
                     payload_bytes = resp.body.encode("utf-8")
                 else:
                     payload_bytes = json.dumps(resp.body).encode("utf-8")
                 self.send_response(resp.status_code)
                 self.send_header("Content-Type", resp.content_type)
+                self.send_header("Cache-Control", "no-store, no-cache, must-revalidate")
+                if resp.headers:
+                    for hk, hv in resp.headers.items():
+                        self.send_header(hk, hv)
                 self.send_header("Content-Length", str(len(payload_bytes)))
                 self.end_headers()
                 self.wfile.write(payload_bytes)

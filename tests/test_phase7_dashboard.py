@@ -273,7 +273,7 @@ def test_simulated_session_lifecycle_endpoints_and_collection_linking(
     db = SQLiteDatabase(tmp_path / "phase7_sim_lifecycle.sqlite3")
     db.apply_migrations()
     repo = MineOpsRepository(db)
-    settings = AppSettings(TELEMETRY_MODE="simulated")
+    settings = AppSettings(TELEMETRY_MODE="simulated", MAX_CPU_PERCENT=100)
     sim = SimulatedMinerPoolAdapter(seed=99, scenario_name="api_lifecycle")
     host_adapter = HostResourceSensorAdapter(psutil_module=None, use_win32_fallback=True)
     collector = TelemetryCollectorService(repo, [host_adapter], settings, simulator=sim)
@@ -380,7 +380,7 @@ def test_real_mode_isolates_sessions_and_prevents_duplicate_simulation_steps(
     repo = MineOpsRepository(db)
 
     # 1. Start a simulated session in simulated mode and verify same-timestamp collection does not duplicate steps
-    sim_settings = AppSettings(TELEMETRY_MODE="simulated")
+    sim_settings = AppSettings(TELEMETRY_MODE="simulated", MAX_CPU_PERCENT=100)
     sim = SimulatedMinerPoolAdapter(seed=123, scenario_name="dedup_test")
     host_adapter = HostResourceSensorAdapter(psutil_module=None, use_win32_fallback=True)
     sim_collector = TelemetryCollectorService(repo, [host_adapter], sim_settings, simulator=sim)
@@ -414,5 +414,113 @@ def test_real_mode_isolates_sessions_and_prevents_duplicate_simulation_steps(
     assert real_api.handle_request("POST", "/api/v1/sessions/start").status_code == 409
     assert real_api.handle_request("POST", "/api/v1/sessions/pause").status_code == 409
     assert real_api.handle_request("POST", "/api/v1/sessions/stop").status_code == 409
+
+
+def test_performance_modes_and_rapido_auto_revert(tmp_path: Path) -> None:
+    """Verify bajo, normal, and rapido performance modes and 10s automatic revert on a 12-thread host."""
+    import json
+    from mineops_dw.domain.hardware_profile import HostHardwareProfile
+
+    db = SQLiteDatabase(tmp_path / "phase7_perf.sqlite3")
+    db.apply_migrations()
+    repo = MineOpsRepository(db)
+    hw_12t = HostHardwareProfile(
+        cpu_model="Test 6C/12T CPU",
+        physical_cores=6,
+        logical_threads=12,
+        total_ram_gib=16.0,
+        gpu_model="Test GPU",
+        estimated_tdp_watts=65.0,
+        os_label="Windows 11",
+    )
+    api = MineOpsApiService(db, repo, AppSettings(TELEMETRY_MODE="real"), host_hardware=hw_12t)
+    cfg_file = tmp_path / "config.json"
+    cfg_file.write_text('{"cpu": {"rx": [0, 2, 4, 6, 8, 10, 9, 11], "priority": 2, "yield": true}}', encoding="utf-8")
+    api._xmrig_config_path = cfg_file
+
+    # Default is normal (8 threads)
+    init_perf = api.handle_request("GET", "/api/v1/performance").body
+    assert init_perf["mode"] == "normal"
+    assert init_perf["threads_count"] == 8
+
+    # Switch to bajo (4 threads)
+    bajo_res = api.handle_request("POST", "/api/v1/performance", body_bytes=b'{"mode": "bajo"}').body
+    assert bajo_res["mode"] == "bajo"
+    assert bajo_res["threads_count"] == 4
+    saved_cfg = json.loads(cfg_file.read_text(encoding="utf-8"))
+    assert len(saved_cfg["cpu"]["rx"]) == 4
+    assert saved_cfg["cpu"]["priority"] == 1
+
+    # Switch to rapido (12 threads) with fallback to bajo after 10s
+    rapido_res = api.handle_request(
+        "POST",
+        "/api/v1/performance",
+        body_bytes=b'{"mode": "rapido", "fallback_mode": "bajo"}',
+    ).body
+    assert rapido_res["mode"] == "rapido"
+    assert rapido_res["threads_count"] == 12
+    assert rapido_res["auto_revert_seconds"] == 10
+    saved_cfg_fast = json.loads(cfg_file.read_text(encoding="utf-8"))
+    assert len(saved_cfg_fast["cpu"]["rx"]) == 12
+    assert saved_cfg_fast["cpu"]["priority"] == 3
+
+    # Simulate 10 seconds elapsed and verify automatic revert to bajo
+    api._perf_revert_at_monotonic = 0.0
+    reverted = api.handle_request("GET", "/api/v1/performance").body
+    assert reverted["mode"] == "bajo"
+    assert reverted["threads_count"] == 4
+    saved_cfg_reverted = json.loads(cfg_file.read_text(encoding="utf-8"))
+    assert len(saved_cfg_reverted["cpu"]["rx"]) == 4
+
+
+def test_excel_and_powerbi_export_endpoints(tmp_path: Path) -> None:
+    """Verify GET /api/v1/exports/excel and GET /api/v1/exports/bi-summary produce a valid 5-sheet .xlsx and Power BI scripts."""
+    import io
+    import zipfile
+
+    db = SQLiteDatabase(tmp_path / "phase7_excel_bi.sqlite3")
+    db.apply_migrations()
+    repo = MineOpsRepository(db)
+    api = MineOpsApiService(db, repo, AppSettings(TELEMETRY_MODE="real"))
+
+    summary_resp = api.handle_request("GET", "/api/v1/exports/bi-summary")
+    assert summary_resp.status_code == 200
+    body = summary_resp.body
+    assert isinstance(body, dict)
+    assert len(body["sheets"]) == 5
+    assert "Fact_Telemetria_Activa" in body["sheets"]
+    assert "Excel.Workbook" in body["power_query_m"]
+    assert "Total_USDT_Minado" in body["dax_measures"]
+
+    excel_resp = api.handle_request("GET", "/api/v1/exports/excel")
+    assert excel_resp.status_code == 200
+    assert isinstance(excel_resp.body, bytes)
+    assert excel_resp.content_type == "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+
+    with zipfile.ZipFile(io.BytesIO(excel_resp.body), "r") as zf:
+        names = set(zf.namelist())
+        assert "xl/workbook.xml" in names
+        assert "xl/worksheets/sheet1.xml" in names
+        assert "xl/worksheets/sheet5.xml" in names
+
+    exec_resp = api.handle_request("GET", "/api/v1/exports/executive-report")
+    assert exec_resp.status_code == 200
+    assert isinstance(exec_resp.body, str)
+    assert "INFORME EJECUTIVO DE OPERACIONES Y BI" in exec_resp.body
+    assert "window.print()" in exec_resp.body
+
+    html_resp = api.handle_request("GET", "/")
+    js_resp = api.handle_request("GET", "/dashboard.js")
+    assert "toast-alerts-container" in html_resp.body
+    assert "btn-executive-pdf" in html_resp.body
+    assert "showToastAlert" in js_resp.body
+    assert "playAlertTone" in js_resp.body
+
+    root = Path(__file__).resolve().parents[1]
+    assert (root / "Iniciar_MineOps.bat").is_file()
+    assert (root / "Detener_MineOps.bat").is_file()
+
+
+
 
 

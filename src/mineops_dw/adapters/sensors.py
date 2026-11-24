@@ -548,10 +548,10 @@ class LhmSensorAdapter:
 
         extracted = _extract_lhm_metrics(payload)
         specs = (
-            ("cpu_temp_c", "°C", "CPU temperature sensor (Tctl/Tdie) not exposed in LHM tree."),
+            ("cpu_temp_c", "°C", "CPU temperature sensor (Tctl/Tdie/Package) not exposed in LHM tree."),
             ("cpu_package_power_w", "W", "CPU Package Power sensor not exposed in LHM tree."),
-            ("gpu_util_percent", "%", "Radeon iGPU Core Load sensor not exposed in LHM tree."),
-            ("gpu_temp_c", "°C", "Radeon iGPU Temperature sensor not exposed in LHM tree."),
+            ("gpu_util_percent", "%", "GPU/iGPU Core Load sensor not exposed in LHM tree."),
+            ("gpu_temp_c", "°C", "GPU/iGPU Temperature sensor not exposed in LHM tree."),
         )
 
         results: list[Measurement] = []
@@ -625,28 +625,51 @@ def _extract_lhm_metrics(node: Any) -> dict[str, float]:
 
         parsed_num = _parse_lhm_numeric_value(raw_value)
         if parsed_num is not None:
-            # CPU Temperature (Ryzen Tctl/Tdie or CPU Core/Package)
+            is_gpu_ctx = any(
+                v in context or v in sensor_id
+                for v in ("gpu", "radeon", "nvidia", "geforce", "rtx", "gtx", "graphics", "iris", "uhd", "arc")
+            )
+            is_cpu_ctx = not is_gpu_ctx and any(
+                c in context or c in sensor_id for c in ("cpu", "amd", "intel", "ryzen", "core", "processor")
+            )
+            # CPU Temperature (Ryzen Tctl/Tdie or Intel/AMD CPU Package/Core)
             if (
-                "temperature" in sensor_id or "°c" in raw_value.lower()
-            ) and any(k in text.lower() for k in ("tctl", "tdie", "cpu package", "core (tctl/tdie)")):
+                is_cpu_ctx
+                and ("temperature" in sensor_id or "°c" in raw_value.lower())
+                and any(
+                    k in text.lower()
+                    for k in (
+                        "tctl",
+                        "tdie",
+                        "cpu package",
+                        "core (tctl/tdie)",
+                        "core max",
+                        "core average",
+                        "package",
+                        "ccd1",
+                    )
+                )
+            ):
                 found.setdefault("cpu_temp_c", parsed_num)
             # CPU Package Power (W)
             elif (
-                "power" in sensor_id or raw_value.endswith(" W")
-            ) and any(k in text.lower() for k in ("package", "cpu")):
+                not is_gpu_ctx
+                and ("power" in sensor_id or raw_value.endswith(" W"))
+                and any(k in text.lower() for k in ("package", "cpu", "cpu package", "cpu cores", "processor"))
+            ):
                 found.setdefault("cpu_package_power_w", parsed_num)
             # GPU Core Load (%)
             elif (
-                ("gpu" in context or "radeon" in context or "gpu" in sensor_id)
+                is_gpu_ctx
                 and ("load" in sensor_id or "%" in raw_value)
                 and any(k in text.lower() for k in ("gpu core", "d3d 3d", "core"))
             ):
                 found.setdefault("gpu_util_percent", parsed_num)
             # GPU Temperature (°C)
             elif (
-                ("gpu" in context or "radeon" in context or "gpu" in sensor_id)
+                is_gpu_ctx
                 and ("temperature" in sensor_id or "°c" in raw_value.lower())
-                and any(k in text.lower() for k in ("gpu", "vr soc", "core", "edge"))
+                and any(k in text.lower() for k in ("gpu", "vr soc", "core", "edge", "hot spot"))
             ):
                 found.setdefault("gpu_temp_c", parsed_num)
 

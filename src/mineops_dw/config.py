@@ -62,6 +62,12 @@ class AppSettings(BaseModel):
         le=95.0,
         alias="MAX_CPU_TEMP_C",
     )
+    cpu_tdp_watts: float | None = Field(
+        default=None,
+        gt=0.0,
+        le=500.0,
+        alias="CPU_TDP_WATTS",
+    )
 
     # Approved thermal supervisor parameters (PARAM-01 to PARAM-04)
     thermal_critical_temp_c: float = Field(

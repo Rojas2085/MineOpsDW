@@ -14,6 +14,14 @@ Una vez iniciado:
 - **Supervisor Térmico y Conector (`CP-04`):** `http://127.0.0.1:8765/api/v1/supervisor/status`
 - **Esquema OpenAPI 3.1:** `http://127.0.0.1:8765/openapi.json`
 - **Conciliación:** `http://127.0.0.1:8765/api/v1/reconciliation`
+- **Exportación Excel (.xlsx) para Power BI:** `http://127.0.0.1:8765/api/v1/exports/excel`
+- **Informe Ejecutivo Gerencial (PDF / Imprimible):** `http://127.0.0.1:8765/api/v1/exports/executive-report`
+
+### Lanzadores de 1 Clic para Windows y Auto-Adaptación Multi-PC
+En la raíz del proyecto se incluyen scripts para instalar, ajustar y operar el sistema en cualquier PC Windows sin configuración manual:
+- `Iniciar_MineOps.bat`: Crea `.venv` e instala dependencias si faltan, inicializa `.env` desde `.env.example` en modo `simulated` si no existe, libera puertos previos, inicia el servicio en segundo plano (`127.0.0.1:8765` y opcionalmente `127.0.0.1:18080` solo si `TELEMETRY_MODE=real` y hay binario XMRig instalado) y abre automáticamente el Dashboard en el navegador predeterminado.
+- `Configurar_XMRig_Real.bat`: Asistente opcional con confirmación explícita (`s/N`) que detecta el hardware del equipo (CPU, núcleos/hilos, RAM, GPU, TDP), descarga XMRig oficial verificando SHA-256 y genera un `config.json` loopback adaptado al procesador local.
+- `Detener_MineOps.bat`: Cierra limpiamente los procesos `xmrig.exe`, `xmrig_daemon.py` y el servidor Python liberando los puertos `8765` y `18080`.
 
 ## 2. Principios operativos
 - Iniciar siempre primero en modo `simulated`.
@@ -44,3 +52,15 @@ python -c "from mineops_dw.storage import restore_sqlite_backup; restore_sqlite_
 ```
 
 > Nota: `restore_sqlite_backup` nunca sobrescribe una base existente salvo que se indique explícitamente `allow_overwrite=True`, y aun en ese caso genera automáticamente una copia preventiva `.pre_restore.bak`.
+
+## 6. Entorno aislado de pruebas con APIs y sockets reales
+Para ejecutar pruebas reales contra sensores del host Windows 11 (`HostResourceSensorAdapter`), Libre Hardware Monitor (`http://127.0.0.1:8085/data.json`), servidores TCP loopback reales (`LocalHttpServer`, `XMRigApiAdapter`, `SRBMinerApiAdapter`, `ThermalSupervisor`), inspección real de procesos (`KryptexProcessAdapter`) y las APIs públicas en vivo de Binance (`GET https://api.binance.com/api/v3/ticker/24hr` y `/api/v3/ticker/price`) usando una base SQLite temporal aislada (sin tocar `data/mineops_dw.sqlite3`):
+
+```powershell
+# Diagnóstico CLI completo en JSON (incluyendo HTTPS real contra api.binance.com)
+$env:PYTHONPATH = "src"; python -m tests.live_api_environment
+
+# Suite pytest de integración con sockets TCP reales y APIs reales en Internet
+$env:MINEOPS_RUN_LIVE_API_TESTS = "1"; $env:PYTHONPATH = "src"; python -m pytest tests/test_live_real_apis.py -v
+```
+

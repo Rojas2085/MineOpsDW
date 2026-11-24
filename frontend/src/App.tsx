@@ -94,7 +94,7 @@ export const App: React.FC = () => {
             <h3>Utilización (%) — Gráfico circular solo para porcentajes</h3>
             <p>CPU Total: {formatMeasurementValue(latestByMetric.get("cpu_percent_total"))}</p>
             <p>RAM Uso: {formatMeasurementValue(latestByMetric.get("ram_usage_percent"))}</p>
-            <p>iGPU Radeon: {formatMeasurementValue(latestByMetric.get("gpu_util_percent"))}</p>
+            <p>GPU / iGPU: {formatMeasurementValue(latestByMetric.get("gpu_util_percent"))}</p>
           </div>
           <div className="unit-group" data-unit="°C">
             <h3>Temperatura (°C)</h3>

@@ -11,7 +11,8 @@ import threading
 from mineops_dw.adapters.mining import SimulatedMinerPoolAdapter
 from mineops_dw.adapters.sensors import SensorAdapter
 from mineops_dw.config import AppSettings
-from mineops_dw.domain.models import Measurement, MiningSession, normalize_utc_timestamp
+from mineops_dw.domain.miner_connector import MinerConnector
+from mineops_dw.domain.models import Measurement, MiningSession, PoolShare, normalize_utc_timestamp
 from mineops_dw.domain.telemetry import (
     SafetyEvaluation,
     compute_energy_measurement,
@@ -47,6 +48,7 @@ class TelemetryCollectorService:
         enable_tdp_fallback: bool = False,
         cpu_tdp_watts: float = 65.0,
         tdp_kappa: float = 1.0,
+        miner_connector: MinerConnector | None = None,
     ) -> None:
         self._repo = repository
         self._adapters = list(adapters)
@@ -55,9 +57,11 @@ class TelemetryCollectorService:
         self._enable_tdp_fallback = enable_tdp_fallback
         self._cpu_tdp_watts = cpu_tdp_watts
         self._tdp_kappa = tdp_kappa
+        self._miner_connector = miner_connector
         self._previous_power: Measurement | None = None
         self._last_cycle_at_utc: str | None = None
         self._last_sim_step_key: tuple[str, str] | None = None
+        self._last_real_shares: tuple[int, int] | None = None
         self._lock = threading.Lock()
 
     @property
@@ -179,6 +183,102 @@ class TelemetryCollectorService:
                         self._repo.insert_reward_snapshot(step_res.pool_reported_reward)
                     if step_res.payout_event is not None:
                         self._repo.insert_payment_event(step_res.payout_event)
+            elif (
+                self._settings.telemetry_mode == "real"
+                and self._miner_connector is not None
+            ):
+                snap = self._miner_connector.get_snapshot()
+                if snap.operational_state == "RUNNING" and (
+                    active_session is None or active_session.session_state != "running"
+                ):
+                    real_sess = MiningSession(
+                        id="real_session_xmrig_active",
+                        started_at_utc=(
+                            active_session.started_at_utc if active_session is not None else ts
+                        ),
+                        ended_at_utc=None,
+                        session_state="running",
+                        data_mode="real",
+                        miner_name=f"XMRig {snap.version}" if snap.version else "XMRig",
+                        pool_name=snap.pool_url or "loopback_pool",
+                        stop_reason=None,
+                    )
+                    self._repo.upsert_session(real_sess)
+                    active_session = real_sess
+                    effective_session_id = real_sess.id
+
+                hr_obs = snap.hashrate_10s_hs
+                if hr_obs.quality == "VALID" and hr_obs.value is not None:
+                    collected.append(
+                        Measurement(
+                            session_id=effective_session_id,
+                            metric_name="hashrate_hs",
+                            value=float(hr_obs.value),
+                            unit="H/s",
+                            status="measured",
+                            source="xmrig_http",
+                            observed_at_utc=ts,
+                        )
+                    )
+                else:
+                    collected.append(
+                        Measurement(
+                            session_id=effective_session_id,
+                            metric_name="hashrate_hs",
+                            value=None,
+                            unit="H/s",
+                            status="unavailable",
+                            source="xmrig_http",
+                            observed_at_utc=ts,
+                            quality_note=(
+                                hr_obs.quality_note
+                                or f"Local miner connector state={snap.operational_state} ({snap.connection_status})."
+                            ),
+                        )
+                    )
+
+                if (
+                    effective_session_id is not None
+                    and snap.shares_good.quality == "VALID"
+                    and snap.shares_good.value is not None
+                    and snap.shares_total.quality == "VALID"
+                    and snap.shares_total.value is not None
+                ):
+                    cur_good = int(snap.shares_good.value)
+                    cur_total = int(snap.shares_total.value)
+                    if self._last_real_shares is None or cur_total < self._last_real_shares[1]:
+                        prev_good, prev_total = 0, 0
+                    else:
+                        prev_good, prev_total = self._last_real_shares
+                    delta_good = max(0, cur_good - prev_good)
+                    delta_rejected = max(0, (cur_total - cur_good) - max(0, prev_total - prev_good))
+                    self._last_real_shares = (cur_good, cur_total)
+                    for idx in range(delta_good):
+                        self._repo.insert_pool_share(
+                            PoolShare(
+                                id=f"real_share_good_{effective_session_id}_{cur_good - delta_good + idx + 1}",
+                                session_id=effective_session_id,
+                                accepted=True,
+                                difficulty=None,
+                                reject_reason=None,
+                                status="measured",
+                                source="xmrig_http",
+                                observed_at_utc=ts,
+                            )
+                        )
+                    for idx in range(delta_rejected):
+                        self._repo.insert_pool_share(
+                            PoolShare(
+                                id=f"real_share_rej_{effective_session_id}_{cur_total}_{idx + 1}",
+                                session_id=effective_session_id,
+                                accepted=False,
+                                difficulty=None,
+                                reject_reason="pool_rejected",
+                                status="measured",
+                                source="xmrig_http",
+                                observed_at_utc=ts,
+                            )
+                        )
 
             persisted_count = 0
             for measurement in collected:
@@ -197,7 +297,11 @@ class TelemetryCollectorService:
                 now_utc=ts,
             )
 
-            if active_session is not None and active_session.session_state == "running":
+            if (
+                active_session is not None
+                and active_session.session_state == "running"
+                and active_session.data_mode == "simulated"
+            ):
                 if safety.should_stop:
                     updated = MiningSession(
                         id=active_session.id,

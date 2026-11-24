@@ -8,6 +8,13 @@ from mineops_dw.domain.economics import (
     compute_profitability_kpi,
     evaluate_economics,
 )
+from mineops_dw.domain.hardware_profile import (
+    HostHardwareProfile,
+    build_adaptive_perf_profiles,
+    build_adaptive_xmrig_config,
+    detect_host_hardware,
+    discover_xmrig_paths,
+)
 from mineops_dw.domain.miner_connector import (
     AcceptancePhase,
     CapabilityEvidenceState,
@@ -77,6 +84,7 @@ __all__ = [
     "DataOrigin",
     "DeliveryPhase",
     "EconomicEvaluation",
+    "HostHardwareProfile",
     "LocalClientReadiness",
     "MatchedPayoutDeposit",
     "Measurement",
@@ -108,8 +116,12 @@ __all__ = [
     "SupervisorMode",
     "TelemetryQuality",
     "ThermalSupervisor",
+    "build_adaptive_perf_profiles",
+    "build_adaptive_xmrig_config",
     "compute_energy_measurement",
     "compute_profitability_kpi",
+    "detect_host_hardware",
+    "discover_xmrig_paths",
     "estimate_power_from_tdp",
     "evaluate_economics",
     "evaluate_safety_limits",
